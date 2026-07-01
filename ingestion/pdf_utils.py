@@ -9,6 +9,18 @@ table serialization, and text chunking.
 
 import pdfplumber
 
+__all__ = [
+    "detect_two_column_layout",
+    "split_two_column_page",
+    "classify_page",
+    "serialize_table_to_text",
+    "extract_table_page",
+    "extract_narrative_page",
+    "extract_mixed_page",
+    "chunk_narrative_text",
+    "chunk_table_text",
+]
+
 # ---------------------------------------------------------------------------
 # Validated thresholds (tested against three real Indian SME annual reports)
 # ---------------------------------------------------------------------------
@@ -183,8 +195,8 @@ def _forward_fill_headers(row: list) -> list:
     filled = []
     last_value = None
     for cell in row:
-        if cell is not None:
-            last_value = cell
+        if cell is not None and str(cell).strip():
+            last_value = str(cell).strip()
         filled.append(last_value)
     return filled
 
@@ -218,7 +230,7 @@ def serialize_table_to_text(table_2d: list) -> str:
         if not row:
             continue
 
-        row_label = row[0]
+        row_label = str(row[0]).strip() if row[0] is not None else ""
         if row_label is None or (isinstance(row_label, str) and row_label.strip() == ""):
             continue
 
@@ -323,6 +335,12 @@ def extract_mixed_page(page) -> str:
     raw_text = page.extract_text() or ""
     cleaned = extract_narrative_page(raw_text)
     if cleaned:
+        cleaned_lines = [
+            line for line in cleaned.splitlines()
+            if not all(c.isdigit() or c in " ,.-()%" for c in line)
+        ]
+        cleaned = "\n".join(cleaned_lines)
+    if cleaned:
         sections.append(cleaned)
 
     return "\n\n".join(sections)
@@ -352,7 +370,7 @@ def chunk_narrative_text(text: str, page_num: int) -> list[dict]:
 
     while start < len(text):
         chunk_text = text[start : start + NARRATIVE_CHUNK_SIZE]
-        if chunk_text:
+        if chunk_text.strip() and len(chunk_text.strip()) > 50:
             chunks.append({
                 "text": chunk_text,
                 "chunk_index": idx,
