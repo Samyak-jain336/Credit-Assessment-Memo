@@ -56,20 +56,12 @@ NARRATIVE_CHUNK_OVERLAP = 150
 # ---------------------------------------------------------------------------
 
 def detect_two_column_layout(page) -> bool:
-    """Detect whether a pdfplumber page has a two-column side-by-side layout.
+    """Detect whether a pdfplumber page has two side-by-side text columns.
 
-    Args:
-        page: A pdfplumber page object.
-
-    Returns:
-        True if the page contains two substantial side-by-side text columns,
-        False otherwise.
-
-    Algorithm:
-        Divides the page width into 20 vertical slices, counts word midpoints
-        per slice, finds the sparsest slice in the middle 60% (slices 4–15)
-        as the column gap, then checks that both the left and right clusters
-        each span at least TWO_COLUMN_MIN_WIDTH_RATIO of the page width.
+    Takes a pdfplumber page object, divides its width into 20 vertical slices,
+    and finds the sparsest slice in the middle 60% as the column gap. Returns
+    True only if both the left and right word clusters each span at least
+    TWO_COLUMN_MIN_WIDTH_RATIO (20%) of the total page width.
     """
     words = page.extract_words()
     if len(words) < 10:
@@ -120,15 +112,11 @@ def detect_two_column_layout(page) -> bool:
 
 
 def split_two_column_page(page) -> tuple[str, str]:
-    """Split a two-column pdfplumber page into left and right text.
+    """Split a two-column pdfplumber page into separate left and right text.
 
-    Args:
-        page: A pdfplumber page object that has been identified as
-              having a two-column layout.
-
-    Returns:
-        A tuple (left_text, right_text) of plain strings extracted
-        from the left and right halves of the page.
+    Crops the page at the horizontal midpoint, extracts text from each half
+    independently, and returns a tuple (left_text, right_text). Should only
+    be called on pages where detect_two_column_layout() returned True.
     """
     mid_x = page.width / 2
     left_crop = page.crop((0, 0, mid_x, page.height))
@@ -145,17 +133,12 @@ def split_two_column_page(page) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def classify_page(page_text: str) -> str:
-    """Classify a page's extracted text into a processing category.
+    """Classify extracted page text as 'skip', 'table', 'mixed', or 'narrative'.
 
-    Args:
-        page_text: Plain text string extracted from a PDF page.
-
-    Returns:
-        One of:
-        - "skip"      — blank or image-only page (< 200 chars)
-        - "table"     — high numeric density, structured financial data
-        - "mixed"     — tables interleaved with prose (e.g. Notes to Accounts)
-        - "narrative" — mostly prose (Director's Report, MDA, etc.)
+    Takes a plain text string and uses character count and digit-to-total density
+    ratios against validated thresholds to determine the page type. Returns 'skip'
+    for near-blank pages, 'table' for high-density short pages, 'mixed' for
+    moderate density, and 'narrative' for low-density prose pages.
     """
     total = len(page_text)
     if total < MIN_CHARS_THRESHOLD:
@@ -176,21 +159,12 @@ def classify_page(page_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _forward_fill_headers(row: list) -> list:
-    """Replace None values in a header row with the last seen non-None value.
+    """Forward-fill None gaps in a header row caused by merged PDF cells.
 
-    Handles merged header cells — pdfplumber returns None for cells that
-    were merged in the original PDF table.
-
-    Args:
-        row: A list representing one row of a pdfplumber table
-             (typically the header row).
-
-    Returns:
-        A new list with None values forward-filled.
-
-    Example:
-        >>> _forward_fill_headers(["FY2024", None, "FY2023", None])
-        ['FY2024', 'FY2024', 'FY2023', 'FY2023']
+    Takes a list (typically row 0 of a pdfplumber table) and replaces each
+    None or whitespace-only cell with the last seen non-empty value. Returns
+    a new list, e.g. ["FY2024", None, "FY2023", None] becomes
+    ["FY2024", "FY2024", "FY2023", "FY2023"].
     """
     filled = []
     last_value = None
@@ -202,21 +176,12 @@ def _forward_fill_headers(row: list) -> list:
 
 
 def serialize_table_to_text(table_2d: list) -> str:
-    """Convert a 2D pdfplumber table into flat natural language text.
+    """Serialize a 2D pdfplumber table into flat natural-language statements.
 
-    Args:
-        table_2d: A 2D list (list of lists) from pdfplumber's
-                  extract_tables(). Row 0 is the header row.
-
-    Returns:
-        A newline-joined string of "<row_label> for <col_header> is <value>"
-        statements, suitable for embedding. Returns "" if the table has
-        fewer than 2 rows.
-
-    Example output:
-        Revenue for FY2024 is 5907.39
-        Revenue for FY2023 is 3950.55
-        PAT for FY2024 is 648.01
+    Takes a list-of-lists (row 0 = headers, remaining rows = data) and produces
+    lines like "Revenue for FY2024 is 5907.39". Handles merged header cells via
+    forward-fill and marks missing values under merged columns as "not reported".
+    Returns an empty string if the table has fewer than 2 rows.
     """
     if len(table_2d) < 2:
         return ""
@@ -267,15 +232,11 @@ def serialize_table_to_text(table_2d: list) -> str:
 # ---------------------------------------------------------------------------
 
 def extract_table_page(page) -> str:
-    """Extract and serialize all tables from a pdfplumber page classified
-    as a table page.
+    """Extract and serialize all tables from a page classified as 'table'.
 
-    Args:
-        page: A pdfplumber page object.
-
-    Returns:
-        A string of serialized table text. Falls back to raw
-        page.extract_text() if no tables are detected.
+    Calls page.extract_tables(), serializes each table into natural-language
+    text via serialize_table_to_text(), and joins them with double newlines.
+    Falls back to raw page.extract_text() if no tables are detected.
     """
     tables = page.extract_tables()
 
@@ -295,14 +256,11 @@ def extract_table_page(page) -> str:
 
 
 def extract_narrative_page(page_text: str) -> str:
-    """Clean raw narrative text by removing blank lines and excess whitespace.
+    """Clean raw narrative text by stripping whitespace and removing blank lines.
 
-    Args:
-        page_text: Raw text string from pdfplumber's extract_text().
-
-    Returns:
-        Cleaned text with empty lines removed and each line stripped
-        of leading/trailing whitespace.
+    Takes the raw text string from pdfplumber's extract_text(), strips each
+    line of leading/trailing whitespace, drops all empty lines, and returns
+    the cleaned text rejoined with newlines.
     """
     lines = page_text.split("\n")
     cleaned = [line.strip() for line in lines]
@@ -311,17 +269,11 @@ def extract_narrative_page(page_text: str) -> str:
 
 
 def extract_mixed_page(page) -> str:
-    """Extract content from a mixed page (tables + narrative prose).
+    """Extract content from a mixed page containing both tables and prose.
 
-    Serializes tables separately to preserve row-column relationships,
-    then appends the cleaned raw page text for surrounding prose context.
-
-    Args:
-        page: A pdfplumber page object classified as "mixed".
-
-    Returns:
-        Combined string: serialized tables first, then cleaned narrative,
-        separated by double newlines.
+    Serializes tables first to preserve row-column structure, then appends
+    the cleaned page text (with pure-numeric lines stripped out) for prose
+    context. All sections are joined with double newlines.
     """
     sections = []
 
@@ -351,17 +303,11 @@ def extract_mixed_page(page) -> str:
 # ---------------------------------------------------------------------------
 
 def chunk_narrative_text(text: str, page_num: int) -> list[dict]:
-    """Split narrative text into overlapping fixed-size chunks.
+    """Split narrative text into overlapping fixed-size chunks for embedding.
 
-    Args:
-        text:     Cleaned narrative text string.
-        page_num: The page number this text was extracted from.
-
-    Returns:
-        A list of dicts, each containing:
-        - "text":         the chunk text
-        - "chunk_index":  sequential int starting at 0
-        - "page_number":  the source page number
+    Slides a 1000-char window across the text, advancing by 850 chars each step
+    (150-char overlap). Returns a list of dicts with keys 'text', 'chunk_index',
+    and 'page_number'. Chunks shorter than 50 chars after stripping are skipped.
     """
     chunks = []
     step = NARRATIVE_CHUNK_SIZE - NARRATIVE_CHUNK_OVERLAP
@@ -385,21 +331,11 @@ def chunk_narrative_text(text: str, page_num: int) -> list[dict]:
 def chunk_table_text(
     text: str, page_num: int, chunk_idx_start: int = 0
 ) -> list[dict]:
-    """Wrap serialized table text into a single chunk (tables are never split).
+    """Wrap serialized table text into a single chunk — tables are never split.
 
-    Splitting a table across chunks would destroy row-column relationships.
-
-    Args:
-        text:            Serialized table text string.
-        page_num:        The page number this table was extracted from.
-        chunk_idx_start: Starting chunk index (default 0).
-
-    Returns:
-        A list containing exactly one chunk dict, or an empty list if the
-        input text is empty/whitespace. The dict contains:
-        - "text":         the table text
-        - "chunk_index":  chunk_idx_start
-        - "page_number":  the source page number
+    Splitting would destroy row-column relationships, so the entire table is
+    kept as one chunk dict with keys 'text', 'chunk_index', and 'page_number'.
+    Returns an empty list if the input text is empty or whitespace-only.
     """
     if not text or not text.strip():
         return []
