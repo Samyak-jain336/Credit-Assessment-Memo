@@ -190,14 +190,21 @@ def serialize_table_to_text(table_2d: list) -> str:
     filled_headers = _forward_fill_headers(raw_headers)
 
     lines = []
-
+    last_row_label = ""
+    
     for row in table_2d[1:]:
         if not row:
             continue
 
-        row_label = str(row[0]).strip() if row[0] is not None else ""
-        if row_label is None or (isinstance(row_label, str) and row_label.strip() == ""):
-            continue
+        current_label = str(row[0]).strip() if row[0] is not None else ""
+        if current_label:
+            last_row_label = current_label  # update carry-forward state
+        else:
+            current_label = last_row_label  # use last seen label
+
+        row_label = current_label
+        if not row_label:
+            continue 
 
         for col_idx in range(1, len(row)):
             cell = row[col_idx]

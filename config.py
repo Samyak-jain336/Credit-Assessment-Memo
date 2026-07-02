@@ -4,7 +4,11 @@ STANDALONE_KEYWORDS = [
     "standalone financial statements",
     "standalone balance sheet",
     "standalone statement of profit",
+    "statement of profit and loss",   # add this
+    "balance sheet",                   # add this
+    "notes to financial statements",   # add this
 ]
+
 
 CONSOLIDATED_KEYWORDS = [
     "consolidated financial statements",
