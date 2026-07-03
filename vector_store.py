@@ -4,10 +4,33 @@ Uses google-genai SDK directly for embeddings since the old google.generativeai
 package is deprecated and no longer compatible with chromadb.
 """
 
+import time
 import chromadb
 import google.genai as genai
 
 from config import CHROMA_PATH, COLLECTION_NAME
+
+
+def _embed_with_retry(genai_client, text: str, max_retries: int = 3):
+    """Call Gemini embed_content with linear backoff on transient errors.
+
+    Google's embedding API occasionally returns 503 UNAVAILABLE under load.
+    Retrying with backoff usually succeeds within a few attempts rather than
+    failing the entire batch on one transient blip.
+    """
+    for attempt in range(max_retries):
+        try:
+            result = genai_client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=text,
+            )
+            return result.embeddings[0].values
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            wait = 5 * (attempt + 1)  # 5s, 10s, 15s
+            print(f"Embedding call failed ({e}), retrying in {wait}s...")
+            time.sleep(wait)
 
 
 def init_vector_store(api_key: str):
@@ -29,13 +52,9 @@ def init_vector_store(api_key: str):
         def __call__(self, input: chromadb.Documents) -> chromadb.Embeddings:
             embeddings = []
             for text in input:
-                # Call Gemini embedding API for each text chunk
-                result = genai_client.models.embed_content(
-                    model="gemini-embedding-001",
-                    contents=text,
-                )
-                # Extract the embedding vector from the response
-                embeddings.append(result.embeddings[0].values)
+                # Call Gemini embedding API for each text chunk, with retry
+                # on transient server errors (e.g. 503 UNAVAILABLE).
+                embeddings.append(_embed_with_retry(genai_client, text))
             return embeddings
 
     embedding_fn = GeminiEmbeddingFunction()

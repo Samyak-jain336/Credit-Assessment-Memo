@@ -133,13 +133,6 @@ def split_two_column_page(page) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def classify_page(page_text: str) -> str:
-    """Classify extracted page text as 'skip', 'table', 'mixed', or 'narrative'.
-
-    Takes a plain text string and uses character count and digit-to-total density
-    ratios against validated thresholds to determine the page type. Returns 'skip'
-    for near-blank pages, 'table' for high-density short pages, 'mixed' for
-    moderate density, and 'narrative' for low-density prose pages.
-    """
     total = len(page_text)
     if total < MIN_CHARS_THRESHOLD:
         return "skip"
@@ -147,8 +140,10 @@ def classify_page(page_text: str) -> str:
     digits = sum(1 for ch in page_text if ch.isdigit())
     density = digits / total
 
-    if density > TABLE_DENSITY_THRESHOLD and total <= TABLE_MAX_CHARS:
-        return "table"
+    if density > TABLE_DENSITY_THRESHOLD:
+        if total <= TABLE_MAX_CHARS:
+            return "table"
+        return "mixed"          # high density but long -> mixed, not narrative
     if density > MIXED_DENSITY_THRESHOLD:
         return "mixed"
     return "narrative"

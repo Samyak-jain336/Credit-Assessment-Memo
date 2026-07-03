@@ -9,8 +9,9 @@ It lives at the project root: CreditAssessmentMemo/test_ingestion.py
 
 import os
 
-from config import TEST_PDF_PATH, TEST_COMPANY_NAME, TEST_FISCAL_YEAR
+from config import TEST_PDF_PATH, TEST_COMPANY_NAME, TEST_FISCAL_YEAR, AUDIT_TEST_PATH
 from ingestion.annual_report import run_annual_report_ingestion
+from ingestion.audit_report import run_audit_report_ingestion
 from vector_store import init_vector_store, add_chunks, query_chunks
 
 
@@ -141,19 +142,19 @@ def main():
         print("Set it and restart your terminal before running this script.")
         return
 
-    if not TEST_PDF_PATH:
-        print("ERROR: TEST_PDF_PATH is empty in config.py.")
+    if not AUDIT_TEST_PATH:
+        print("ERROR: AUDIT_TEST_PATH is empty in config.py.")
         print("Set it to the path of the annual report PDF you want to test.")
         return
 
-    print(f"Ingesting: {TEST_PDF_PATH}")
+    print(f"Ingesting: {AUDIT_TEST_PATH}")
     print(f"Company: {TEST_COMPANY_NAME}, Fiscal Year: {TEST_FISCAL_YEAR}")
 
     # Step 1: run the full PDF -> chunks pipeline we built in
     # annual_report.py. This does all the heavy lifting — two-column
     # splitting, page classification, table serialization, chunking.
-    chunks = run_annual_report_ingestion(
-        filepath=TEST_PDF_PATH,
+    chunks = run_audit_report_ingestion(
+        filepath=AUDIT_TEST_PATH,
         company_name=TEST_COMPANY_NAME,
         fiscal_year=TEST_FISCAL_YEAR,
     )
