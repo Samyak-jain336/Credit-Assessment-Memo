@@ -153,30 +153,12 @@ def main():
     # Step 1: run the full PDF -> chunks pipeline we built in
     # annual_report.py. This does all the heavy lifting — two-column
     # splitting, page classification, table serialization, chunking.
-    chunks = run_audit_report_ingestion(
-        filepath=AUDIT_TEST_PATH,
-        company_name=TEST_COMPANY_NAME,
-        fiscal_year=TEST_FISCAL_YEAR,
+    from ingestion.saverisk import run_saverisk_ingestion
+
+    chunks = run_saverisk_ingestion(
+        filepath=r"Inputs\Durlax Top Surface Limited\Durlax Top.xlsx",
+        company_name="Durlax Top Surface Limited",
     )
-
-    # Step 2: print stats and sample chunks BEFORE storing in ChromaDB,
-    # so you can catch obvious extraction problems without waiting on
-    # the embedding API calls (which cost time and a small amount of quota).
-    print_chunk_stats(chunks)
-    print_sample_chunks(chunks)
-
-    # Step 3: initialise ChromaDB and store the chunks. This is where
-    # the actual embedding API calls happen — each chunk's text gets
-    # converted into a vector by Google's text-embedding-004 model.
-    collection, _ = init_vector_store(api_key=GEMINI_API_KEY)
-    add_chunks(collection, chunks)
-
-    print(f"\nStored {len(chunks)} chunks in ChromaDB collection "
-          f"at {os.path.dirname(__file__)}/data/chromadb")
-
-    # Step 4: run a few sanity-check queries to confirm retrieval
-    # actually surfaces relevant chunks, not just that storage worked.
-    run_test_queries(collection)
 
 
 if __name__ == "__main__":
