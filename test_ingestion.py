@@ -133,10 +133,10 @@ def run_test_queries(collection) -> None:
 
 
 def main():
-    """Run the full test: ingest bank statement into ChromaDB + MySQL."""
+    """Run the full parser agent for Durlax."""
 
     import os
-    from ingestion.bank_statement import run_bank_statement_ingestion
+    from parser_agent import run_parser_agent
 
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
@@ -144,18 +144,12 @@ def main():
         print("ERROR: GEMINI_API_KEY environment variable not set.")
         return
 
-    BANK_STATEMENT_PATH = r"C:\Users\samya\OneDrive\Documents\GitHub\CreditAssessmentMemo\Inputs\Durlax Top Surface Limited\Durlax_ICICI_Statement_Jul-Sep_2025_SPECIMEN.pdf"
-    COMPANY_NAME = "Durlax Top Surface Limited"
-
-    summary = run_bank_statement_ingestion(
-        filepath=BANK_STATEMENT_PATH,
-        company_name=COMPANY_NAME,
+    run_parser_agent(
+        folder_path=r"C:\Users\samya\OneDrive\Documents\GitHub\CreditAssessmentMemo\Inputs\Durlax Top Surface Limited",
+        company_name="Durlax Top Surface Limited",
+        fiscal_year=2025,
         gemini_api_key=GEMINI_API_KEY,
     )
-
-    print("\nReturned summary:")
-    import json
-    print(json.dumps(summary, indent=2, default=str))
 
 
 if __name__ == "__main__":
