@@ -133,32 +133,29 @@ def run_test_queries(collection) -> None:
 
 
 def main():
-    """Run the full test: ingest → store → inspect → query."""
+    """Run the full test: ingest bank statement into ChromaDB + MySQL."""
 
-    # Fail loudly and early if the API key isn't set, rather than
-    # letting ChromaDB throw a confusing error deep in add_chunks().
+    import os
+    from ingestion.bank_statement import run_bank_statement_ingestion
+
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
     if not GEMINI_API_KEY:
         print("ERROR: GEMINI_API_KEY environment variable not set.")
-        print("Set it and restart your terminal before running this script.")
         return
 
-    if not AUDIT_TEST_PATH:
-        print("ERROR: AUDIT_TEST_PATH is empty in config.py.")
-        print("Set it to the path of the annual report PDF you want to test.")
-        return
+    BANK_STATEMENT_PATH = r"C:\Users\samya\OneDrive\Documents\GitHub\CreditAssessmentMemo\Inputs\Durlax Top Surface Limited\Durlax_ICICI_Statement_Jul-Sep_2025_SPECIMEN.pdf"
+    COMPANY_NAME = "Durlax Top Surface Limited"
 
-    print(f"Ingesting: {AUDIT_TEST_PATH}")
-    print(f"Company: {TEST_COMPANY_NAME}, Fiscal Year: {TEST_FISCAL_YEAR}")
-
-    # Step 1: run the full PDF -> chunks pipeline we built in
-    # annual_report.py. This does all the heavy lifting — two-column
-    # splitting, page classification, table serialization, chunking.
-    from ingestion.saverisk import run_saverisk_ingestion
-
-    chunks = run_saverisk_ingestion(
-        filepath=r"Inputs\Durlax Top Surface Limited\Durlax Top.xlsx",
-        company_name="Durlax Top Surface Limited",
+    summary = run_bank_statement_ingestion(
+        filepath=BANK_STATEMENT_PATH,
+        company_name=COMPANY_NAME,
+        gemini_api_key=GEMINI_API_KEY,
     )
+
+    print("\nReturned summary:")
+    import json
+    print(json.dumps(summary, indent=2, default=str))
 
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ def call_llm(prompt: str, expect_json: bool = False) -> str:
                 model=GROQ_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,      # deterministic output for structured tasks
-                max_tokens=1024,
+                max_tokens=2048,
             )
             return response.choices[0].message.content
 

@@ -88,6 +88,8 @@ def add_chunks(collection, chunks: list[dict]) -> None:
             "company_name": chunk["company_name"],
             "fiscal_year": chunk["fiscal_year"],
             "document_type": chunk["document_type"],
+            "source_filename": chunk.get("source_filename", ""),
+            "filing_date": chunk.get("filing_date") or "",
         })
 
         sanitized_name = chunk["company_name"].replace(" ", "_").lower()

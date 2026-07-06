@@ -120,6 +120,44 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bank_statements (
+            id                      INT AUTO_INCREMENT PRIMARY KEY,
+            company_id              INT NOT NULL,
+            bank_name               VARCHAR(255),
+            account_type            VARCHAR(100),
+            account_number          VARCHAR(100),
+            sanctioned_limit        DECIMAL(15,2),
+            statement_period_from   DATE,
+            statement_period_to     DATE,
+            currency                VARCHAR(20) DEFAULT 'INR',
+            unit                    VARCHAR(20) NOT NULL,
+            avg_monthly_balance     DECIMAL(15,2),
+            total_credits           DECIMAL(15,2),
+            total_debits            DECIMAL(15,2),
+            closing_balance         DECIMAL(15,2),
+            emi_count               INT,
+            bounce_count            INT,
+            source_filename         VARCHAR(255),
+            other_findings          JSON,
+            FOREIGN KEY (company_id) REFERENCES companies(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ingestion_runs (
+            id                      INT AUTO_INCREMENT PRIMARY KEY,
+            company_name            VARCHAR(255) NOT NULL UNIQUE,
+            annual_report_parsed    TINYINT DEFAULT 0,
+            audit_report_parsed     TINYINT DEFAULT 0,
+            screener_parsed         TINYINT DEFAULT 0,
+            exchange_filings_parsed TINYINT DEFAULT 0,
+            bank_statements_parsed  TINYINT DEFAULT 0,
+            created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
