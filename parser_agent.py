@@ -25,6 +25,7 @@ from ingestion.audit_report import run_audit_report_ingestion
 from ingestion.saverisk import run_saverisk_ingestion
 from ingestion.exchange_filings import run_exchange_filings_ingestion
 from ingestion.bank_statement import run_bank_statement_ingestion
+from vector_store import init_vector_store, add_chunks
 
 
 # ---------------------------------------------------------------------------
@@ -182,11 +183,14 @@ def run_parser_agent(
             else:
                 filepath = _find_single_file(annual_report_dir, [".pdf"])
                 if filepath:
-                    run_annual_report_ingestion(
+                    chunks = run_annual_report_ingestion(
                         filepath=str(filepath),
                         company_name=company_name,
                         fiscal_year=fiscal_year,
                     )
+                    collection, _ = init_vector_store(api_key=gemini_api_key)
+                    add_chunks(collection, chunks)
+                    print(f"  {len(chunks)} chunks stored in ChromaDB")
                     _set_flag(cursor, company_name, "annual_report_parsed")
                     conn.commit()
                     print("  Annual report ingestion COMPLETE ✓")
@@ -206,11 +210,14 @@ def run_parser_agent(
             else:
                 filepath = _find_single_file(audit_report_dir, [".pdf"])
                 if filepath:
-                    run_audit_report_ingestion(
+                    chunks = run_audit_report_ingestion(
                         filepath=str(filepath),
                         company_name=company_name,
                         fiscal_year=fiscal_year,
                     )
+                    collection, _ = init_vector_store(api_key=gemini_api_key)
+                    add_chunks(collection, chunks)
+                    print(f"  {len(chunks)} chunks stored in ChromaDB")
                     _set_flag(cursor, company_name, "audit_report_parsed")
                     conn.commit()
                     print("  Audit report ingestion COMPLETE ✓")

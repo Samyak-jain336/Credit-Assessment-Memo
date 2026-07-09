@@ -14,7 +14,7 @@ Each section is generated independently so the orchestration layer
 
 from typing import List
 
-from llm_utils import call_llm
+from llm_utils import call_gemini
 
 from prompts import (
     SYSTEM_PROMPT,
@@ -62,7 +62,7 @@ class SectionGenerator:
             + user_prompt
         )
 
-        response = call_llm(full_prompt)
+        response = call_gemini(full_prompt)
 
         return CAMSection(
             title=title,
@@ -77,7 +77,7 @@ class SectionGenerator:
     def generate_all_sections(
         self,
         section_titles: List[str],
-        retrieved_chunks: List[RetrievedChunk],
+        section_chunks: dict,
         reconciliation_results: List[ReconciliationResult],
     ) -> List[CAMSection]:
         """
@@ -88,9 +88,11 @@ class SectionGenerator:
 
         for title in section_titles:
 
+            chunks_for_section = section_chunks.get(title, [])
+
             section = self.generate_section(
                 title,
-                retrieved_chunks,
+                chunks_for_section,
                 reconciliation_results,
             )
 

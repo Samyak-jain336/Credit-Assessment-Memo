@@ -5,12 +5,18 @@ Provides a single call_llm() function that tries three Groq API keys
 in sequence, falling back to the next key on any failure. Used for
 small structured calls (currency/unit detection, field mapping etc.)
 across the pipeline.
+
+Also provides call_gemini() / call_gemini_json() for tasks routed
+through the Gemini API (google-genai SDK).
 """
 
 import json
+import time
 from groq import Groq
+import google.genai as genai
 
 from config import GROQ_API_KEY_1, GROQ_API_KEY_2, GROQ_API_KEY_3, GROQ_MODEL
+from config import GEMINI_API_KEY, GEMINI_MODEL
 
 
 def call_llm(prompt: str, expect_json: bool = False) -> str:
@@ -88,6 +94,87 @@ def call_llm_json(prompt: str) -> dict:
     except json.JSONDecodeError as e:
         raise ValueError(
             f"LLM response could not be parsed as JSON.\n"
+            f"Raw response: {raw}\n"
+            f"Error: {e}"
+        )
+
+
+# ------------------------------------------------------------------ #
+#  Gemini LLM helpers  (google-genai SDK)                            #
+# ------------------------------------------------------------------ #
+
+def call_gemini(prompt: str, expect_json: bool = False) -> str:
+    """Call the Gemini LLM with retry-on-failure.
+
+    Retries up to 5 times on any exception, waiting 5 s, 10 s, 15 s, 20 s, 25 s
+    between attempts (same backoff curve used in vector_store.py's
+    embedding retry helper).
+
+    Args:
+        prompt:      The user prompt to send to Gemini.
+        expect_json: If True, appends an instruction asking the model
+                     to respond with valid JSON only (mirrors call_llm).
+
+    Returns:
+        The model response as a plain string.
+
+    Raises:
+        RuntimeError: If all 5 attempts fail.
+    """
+    if expect_json:
+        prompt = (
+            prompt
+            + "\n\nRespond ONLY with valid JSON. "
+            "No explanation, no markdown fences, no preamble."
+        )
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    max_retries = 5
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+            return response.text
+        except Exception as e:
+            last_error = e
+            if attempt == max_retries - 1:
+                break
+            wait = 5 * (attempt + 1)  # 5s, 10s, 15s
+            print(f"Gemini call failed ({e}), retrying in {wait}s...")
+            time.sleep(wait)
+
+    raise RuntimeError(
+        f"All Gemini attempts failed. Last error: {last_error}"
+    )
+
+
+def call_gemini_json(prompt: str) -> dict:
+    """Call Gemini and parse the response as JSON.
+
+    Convenience wrapper around call_gemini() for structured extraction
+    tasks. Strips markdown fences if the model includes them despite
+    instructions. Raises ValueError if the response cannot be parsed
+    as JSON.
+    """
+    raw = call_gemini(prompt, expect_json=True)
+
+    # Strip markdown fences in case the model ignores the instruction
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("```")[1]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+    cleaned = cleaned.strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Gemini response could not be parsed as JSON.\n"
             f"Raw response: {raw}\n"
             f"Error: {e}"
         )

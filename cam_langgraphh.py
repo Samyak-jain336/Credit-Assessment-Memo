@@ -21,6 +21,7 @@ The design intentionally mirrors a future LangGraph workflow where each
 method can be converted into an independent graph node.
 """
 
+import os
 from typing import List
 
 import schema
@@ -28,10 +29,10 @@ import schema
 from data_access import DataAccess
 from reconciliation import ReconciliationAgent
 from section_generation import SectionGenerator
-
-# Future imports
-# from retrieval import RetrievalAgent
-# from docx_writer import DocumentWriter
+from vector_store import init_vector_store, query_chunks
+from docx_writer import DocumentWriter
+from stubs import RetrievedChunk
+from parser_agent import run_parser_agent
 
 
 class CAMOrchestrator:
@@ -39,7 +40,9 @@ class CAMOrchestrator:
     Coordinates the entire CAM generation workflow.
     """
 
-    def __init__(self, collection=None):
+    def __init__(self, gemini_api_key: str, collection=None):
+        if collection is None:
+            collection, _ = init_vector_store(api_key=gemini_api_key)
         self.collection = collection
 
         self.db = DataAccess()
@@ -54,10 +57,20 @@ class CAMOrchestrator:
         self,
         company_name: str,
         fiscal_year: int,
+        folder_path: str,
+        gemini_api_key: str,
     ):
         """
         Execute the complete CAM generation pipeline.
         """
+
+        print(f"Ensuring ingestion is complete for {company_name}...")
+        run_parser_agent(
+            folder_path=folder_path,
+            company_name=company_name,
+            fiscal_year=fiscal_year,
+            gemini_api_key=gemini_api_key,
+        )
 
         print(f"Generating CAM for {company_name} ({fiscal_year})")
 
@@ -84,6 +97,7 @@ class CAMOrchestrator:
 
         output = self.write_document(
             company_name,
+            fiscal_year,
             sections,
         )
 
@@ -115,14 +129,45 @@ class CAMOrchestrator:
         """
         Retrieve relevant evidence from ChromaDB.
 
-        Placeholder until retrieval module is implemented.
+        Returns a dict of {section_title: List[RetrievedChunk]} using
+        the per-section queries defined in schema.SECTION_QUERIES.
         """
 
-        print("Retrieving supporting evidence...")
+        print("Retrieving supporting evidence per section...")
+        section_chunks = {}
 
-        # TODO:
-        # query_chunks(...)
-        return []
+        for title, queries in schema.SECTION_QUERIES.items():
+            chunks = []
+            seen_ids = set()
+
+            for q in queries:
+                results = query_chunks(
+                    self.collection,
+                    query_text=q,
+                    filters={"company_name": company_name},
+                    n_results=2,
+                )
+                for r in results:
+                    uid = (
+                        r["metadata"]["page_number"],
+                        r["metadata"]["chunk_index"],
+                        r["metadata"]["document_type"],
+                    )
+                    if uid in seen_ids:
+                        continue
+                    seen_ids.add(uid)
+                    chunks.append(
+                        RetrievedChunk(
+                            text=r["text"],
+                            metadata=r["metadata"],
+                            distance=r["distance"],
+                        )
+                    )
+
+            section_chunks[title] = chunks
+            print(f"  {title}: {len(chunks)} chunks")
+
+        return section_chunks
 
     def reconcile(
         self,
@@ -133,15 +178,37 @@ class CAMOrchestrator:
         Compare DB values with retrieved evidence.
         """
 
+        financials = company_bundle["financials"]
+        if financials is None:
+            print("WARNING: No financials found — skipping reconciliation.")
+            return []
+
+        # retrieved_chunks is {section_title: List[RetrievedChunk]} —
+        # reconciliation expects a flat list, so flatten all sections.
+        # Deduplicate by (page_number, chunk_index, document_type) so
+        # the same chunk appearing in multiple sections isn't double-counted.
+        seen = set()
+        flat_chunks = []
+        for chunks in retrieved_chunks.values():
+            for chunk in chunks:
+                uid = (
+                    chunk.metadata["page_number"],
+                    chunk.metadata["chunk_index"],
+                    chunk.metadata["document_type"],
+                )
+                if uid not in seen:
+                    seen.add(uid)
+                    flat_chunks.append(chunk)
+
         return self.reconciliation.reconcile(
-            company_bundle["financials"],
-            retrieved_chunks,
+            financials,
+            flat_chunks,
         )
 
     def generate_sections(
         self,
         company_bundle,
-        retrieved_chunks,
+        section_chunks,
         reconciliation_results,
     ):
         """
@@ -152,31 +219,28 @@ class CAMOrchestrator:
 
         return self.generator.generate_all_sections(
             titles,
-            retrieved_chunks,
+            section_chunks,
             reconciliation_results,
         )
 
     def write_document(
         self,
         company_name,
+        fiscal_year,
         sections,
     ):
         """
-        Write final CAM report.
-
-        Placeholder until docx_writer.py is completed.
+        Write final CAM report as a .docx file.
         """
 
         print("Writing report...")
 
-        # Future:
-        #
-        # writer = DocumentWriter()
-        #
-        # return writer.write(...)
-        #
+        output_path = f"{company_name.replace(' ', '_')}_CAM.docx"
 
-        return f"{company_name}_CAM.docx"
+        writer = DocumentWriter()
+        writer.write(company_name, fiscal_year, sections, output_path)
+
+        return output_path
 
     # ---------------------------------------------------------
     # Cleanup
@@ -188,12 +252,18 @@ class CAMOrchestrator:
 
 if __name__ == "__main__":
 
-    orchestrator = CAMOrchestrator()
+    orchestrator = CAMOrchestrator(
+        gemini_api_key=os.environ.get("GEMINI_API_KEY"),
+    )
 
     orchestrator.generate_cam(
 
         company_name="Durlax Top Surface Limited",
 
         fiscal_year=2025,
+
+        folder_path=r"C:\Users\samya\OneDrive\Documents\GitHub\CreditAssessmentMemo\Inputs\Durlax Top Surface Limited",
+
+        gemini_api_key=os.environ.get("GEMINI_API_KEY"),
 
     )

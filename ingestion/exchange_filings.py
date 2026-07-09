@@ -9,11 +9,16 @@ Entry point: run_exchange_filings_ingestion(folder_path, company_id, gemini_api_
 """
 
 import re
+import base64
+import time
 from pathlib import Path
 
 import pdfplumber
+import fitz  # pymupdf — pip install pymupdf pillow
+import google.genai as genai
 
 from vector_store import init_vector_store, add_chunks
+from config import GEMINI_API_KEY, GEMINI_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -27,13 +32,11 @@ CHUNK_OVERLAP = 150
 # sheet, P&L, annexure etc.) — these pages are only skipped when they are
 # also in landscape orientation, since landscape + financial keywords almost
 # always means a wide-format table that doesn't chunk well as narrative text.
-LANDSCAPE_SKIP_KEYWORDS = [
-    "balance sheet",
-    "profit and loss",
-    "statement of profit",
-    "annexure a",
-    "fixed assets",
-]
+# Intentionally empty — exchange filing PDFs (board meeting outcomes,
+# quarterly results) ARE the financial data source for recent periods.
+# Skipping landscape financial pages here silently drops FY26 data
+# that has no other source in the pipeline.
+LANDSCAPE_SKIP_KEYWORDS = []
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +132,91 @@ def extract_filing_date(first_page_text: str) -> str | None:
     return None
 
 
+def extract_text_via_gemini_vision(filepath: str) -> tuple[list[dict], str | None]:
+    """Fallback extractor for scanned/image-based PDF pages using Gemini vision.
+
+    Converts each page to a PNG at 200 DPI using pymupdf, sends it to
+    Gemini with a structured extraction prompt, and returns page dicts
+    in the same format as extract_text_from_pdf(). Used automatically
+    when pdfplumber extracts text from fewer than 3 pages — the signal
+    that the PDF is scanned rather than text-based.
+
+    Retries each page up to 3 times with 5s/10s/15s backoff (same
+    pattern as vector_store.py and llm_utils.py call_gemini()).
+    """
+    pages = []
+    filing_date = None
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+    doc = fitz.open(filepath)
+
+    for page_num, page in enumerate(doc, start=1):
+        # Render page to PNG at 200 DPI — sufficient resolution for
+        # dense financial tables without excessive image size.
+        mat = fitz.Matrix(200/72, 200/72)
+        pix = page.get_pixmap(matrix=mat)
+        img_b64 = base64.b64encode(pix.tobytes("png")).decode()
+
+        prompt = (
+            f"This is page {page_num} of an Indian company's NSE exchange "
+            f"filing PDF. Extract ALL text exactly as it appears, preserving:\n"
+            f"- All financial figures and their row/column labels\n"
+            f"- Table structure: use | to separate columns\n"
+            f"- Headers, subheaders, and period labels (e.g. Year Ended 31.03.2026)\n"
+            f"- Dates, reference numbers, and signatory details\n\n"
+            f"If this page contains a financial statement (P&L, Balance Sheet, "
+            f"Cash Flow), extract every single row with all period values shown.\n\n"
+            f"Return only the extracted text. No commentary, no markdown fences."
+        )
+
+        last_error = None
+        extracted = ""
+
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=[
+                        {
+                            "parts": [
+                                {
+                                    "inline_data": {
+                                        "mime_type": "image/png",
+                                        "data": img_b64,
+                                    }
+                                },
+                                {"text": prompt},
+                            ]
+                        }
+                    ],
+                )
+                extracted = response.text.strip()
+                break
+            except Exception as e:
+                last_error = e
+                if attempt == 2:
+                    print(f"  Gemini vision failed page {page_num} after 3 attempts: {e}")
+                else:
+                    wait = 5 * (attempt + 1)  # 5s, 10s, 15s
+                    print(f"  Gemini vision page {page_num} attempt {attempt+1} failed ({e}), retrying in {wait}s...")
+                    time.sleep(wait)
+
+        if not extracted:
+            continue
+
+        # Try to extract filing date from first page text
+        if page_num == 1 and filing_date is None:
+            filing_date = extract_filing_date(extracted)
+
+        pages.append({
+            "text": extracted,
+            "page_number": page_num,
+        })
+
+    doc.close()
+    return pages, filing_date
+
+
 # ---------------------------------------------------------------------------
 # FUNCTION 4 — Extract text from all pages of a single PDF
 # ---------------------------------------------------------------------------
@@ -176,6 +264,16 @@ def extract_text_from_pdf(filepath: str) -> tuple[list[dict], str | None]:
                 "text": cleaned_text,
                 "page_number": page_num,
             })
+
+    # If pdfplumber extracted text from fewer than 3 pages, this is
+    # almost certainly a scanned/image PDF. Fall back to Gemini vision
+    # OCR which handles image-embedded financial tables correctly.
+    # The threshold is 3 (not 0) because cover letter pages are
+    # text-based even when the financial annexures are scanned images.
+    if len(pages) < 3:
+        print(f"  Only {len(pages)} text page(s) via pdfplumber — "
+              f"falling back to Gemini vision OCR...")
+        return extract_text_via_gemini_vision(filepath)
 
     return pages, filing_date
 

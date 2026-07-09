@@ -154,3 +154,26 @@ CAM_SECTIONS = {
     10: "Recommendation",
 
 }
+
+SECTION_QUERIES = {
+    "Applicant Overview": ["company overview", "registered office", "constitution of business"],
+    "Company Background": ["incorporation history", "business activities", "promoters and directors"],
+    "Financial Analysis": ["revenue from operations", "profit after tax", "cash flow from operations"],
+    "Banking Conduct": ["average monthly balance", "cheque bounce", "emi deduction"],
+    "Tax and Statutory Compliance": ["income tax return", "gst return", "statutory dues"],
+    "Audit and Compliance": ["auditor qualification and audit opinion", "emphasis of matter"],
+    "Risk Assessment": [
+    "borrowings and long term debt",
+    "contingent liabilities",
+    "related party transactions",
+    "net profit",
+    "cash flow from operations",
+    "debt to equity ratio",
+    ],
+    "Collateral": ["collateral security", "hypothecation", "valuation report"],
+    "Data Consistency Review": [],
+    "Recommendation": ["credit recommendation",
+        "debt to equity ratio",
+        "current ratio",
+        "cash flow from operations"],
+}
