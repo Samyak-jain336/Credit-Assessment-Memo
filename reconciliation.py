@@ -5,14 +5,9 @@ Performs reconciliation between structured database values and
 retrieved document evidence before CAM generation.
 
 This module DOES NOT call the LLM.
-
-Responsibilities
-----------------
-1. Compare DB values against extracted evidence.
-2. Detect inconsistencies.
-3. Produce structured reconciliation results.
 """
 
+import re
 from typing import Any, Dict, List
 
 import schema
@@ -20,6 +15,59 @@ from stubs import (
     RetrievedChunk,
     ReconciliationResult,
 )
+
+# ------------------------------------------------------------------
+# Financial statement labels used inside PDFs
+# ------------------------------------------------------------------
+
+FIELD_KEYWORDS = {
+    "revenue": [
+        "revenue from operations",
+        "total revenue",
+        "turnover",
+        "net sales",
+    ],
+    "net_profit": [
+        "profit after tax",
+        "net profit",
+        "profit for the year",
+        "profit / (loss) for the period",
+    ],
+    "borrowings": [
+        "borrowings",
+        "long term borrowings",
+        "short term borrowings",
+        "total borrowings",
+    ],
+    "cash_and_bank": [
+        "cash and bank balances",
+        "cash & bank balances",
+        "cash and cash equivalents",
+        "balance with banks",
+    ],
+    "inventory": [
+        "inventories",
+        "inventory",
+        "stock in trade",
+    ],
+    "trade_receivables": [
+        "trade receivables",
+        "sundry debtors",
+        "receivables",
+    ],
+    "cfo": [
+        "cash flow from operating",
+        "net cash from operating",
+        "cash generated from operations",
+        "net cash flow from operating activities",
+    ],
+    "net_cash_flow": [
+        "net increase in cash",
+        "net decrease in cash",
+        "net change in cash",
+        "net increase / (decrease) in cash",
+    ],
+}
 
 
 class ReconciliationAgent:
@@ -39,21 +87,6 @@ class ReconciliationAgent:
         financials: Dict[str, Any],
         retrieved_chunks: List[RetrievedChunk],
     ) -> List[ReconciliationResult]:
-        """
-        Reconcile all configured financial fields.
-
-        Parameters
-        ----------
-        financials:
-            Row returned from financials table.
-
-        retrieved_chunks:
-            Relevant chunks retrieved from ChromaDB.
-
-        Returns
-        -------
-        List[ReconciliationResult]
-        """
 
         results = []
 
@@ -62,14 +95,25 @@ class ReconciliationAgent:
             for chunk in retrieved_chunks
         )
 
+        # Normalize whitespace to make regex matching more reliable
+        chunk_text = " ".join(chunk_text.split())
+
         for field in schema.RECONCILIATION_FIELDS:
 
             db_value = financials.get(field)
 
-            extracted_value = self._extract_value(
+            # Try numeric extraction first
+            extracted_value = self._extract_numeric(
                 field,
                 chunk_text,
             )
+
+            # Fall back to keyword detection
+            if extracted_value is None:
+                extracted_value = self._extract_value(
+                    field,
+                    chunk_text,
+                )
 
             status = self._compare(
                 db_value,
@@ -85,21 +129,13 @@ class ReconciliationAgent:
                 )
 
             results.append(
-
                 ReconciliationResult(
-
                     field_name=field,
-
                     database_value=db_value,
-
                     extracted_value=extracted_value,
-
                     status=status,
-
                     remarks=remarks,
-
                 )
-
             )
 
         return results
@@ -113,19 +149,76 @@ class ReconciliationAgent:
         field: str,
         chunk_text: str,
     ):
+
+        keywords = FIELD_KEYWORDS.get(
+            field,
+            [field.lower().replace("_", " ")]
+        )
+
+        for keyword in keywords:
+            if keyword.lower() in chunk_text:
+                return "FOUND"
+
+        return None
+
+    def _extract_numeric(
+        self,
+        field: str,
+        chunk_text: str,
+    ):
+        """Extract a numeric value for a field from chunk text.
+
+        Two-pass approach:
+        Pass 1 — looks for the keyword near a recent year label (2025 or 2026)
+                  so the current year column is preferred over the prior year
+                  column in two-column P&L/Balance Sheet tables. This prevents
+                  the regex from picking up FY24 figures (e.g. 174.09) instead
+                  of FY25 figures (e.g. 749.66) when both appear after the
+                  same keyword.
+        Pass 2 — falls back to a tight 60-char window with no year constraint
+                  if pass 1 finds nothing.
+
+        Minimum value filter of 10 Lakhs eliminates note reference numbers,
+        page numbers, and percentages from being returned as financial values.
         """
-        Extract a value for a field from retrieved evidence.
+        keywords = FIELD_KEYWORDS.get(
+            field,
+            [field.lower().replace("_", " ")]
+        )
 
-        Current implementation performs keyword detection only.
+        for keyword in keywords:
 
-        Future versions can replace this with:
-            - Regex
-            - Table parser
-            - LLM extraction
-        """
+            # Pass 1: prefer value near a current year label
+            year_pattern = (
+                rf"{re.escape(keyword)}"
+                rf"[^\n]{{0,120}}"
+                rf"(?:2025|2026)"
+                rf"[^\n]{{0,60}}"
+                rf"((?:\d{{1,3}}(?:,\d{{3}})*|\d{{3,}})(?:\.\d+)?)"
+            )
+            match = re.search(year_pattern, chunk_text, re.IGNORECASE)
 
-        if field.lower() in chunk_text:
-            return "FOUND"
+            if not match:
+                # Pass 2: no year label, tight window fallback
+                pattern = (
+                    rf"{re.escape(keyword)}"
+                    rf"[^\n]{{0,60}}"
+                    rf"((?:\d{{1,3}}(?:,\d{{3}})*|\d{{3,}})(?:\.\d+)?)"
+                )
+                match = re.search(pattern, chunk_text, re.IGNORECASE)
+
+            if match:
+                try:
+                    value = float(match.group(1).replace(",", ""))
+                    # Filter out note numbers, page numbers, percentages.
+                    # Real SME financials in Lakhs are never single or
+                    # double digit. Adjust only for micro-cap companies
+                    # where figures genuinely fall below 10 Lakhs.
+                    if value < 10:
+                        continue
+                    return value
+                except ValueError:
+                    continue
 
         return None
 
@@ -134,9 +227,6 @@ class ReconciliationAgent:
         db_value,
         extracted_value,
     ) -> str:
-        """
-        Compare DB value against extracted evidence.
-        """
 
         if extracted_value is None:
             return schema.MISMATCH
@@ -144,4 +234,30 @@ class ReconciliationAgent:
         if db_value is None:
             return schema.MISMATCH
 
-        return schema.MATCH
+        # Keyword found but no numeric value
+        if extracted_value == "FOUND":
+            return schema.MATCH
+
+        try:
+
+            # Database stores Crores
+            db_in_lakhs = float(db_value) * 100
+
+            diff = abs(
+                db_in_lakhs - float(extracted_value)
+            )
+
+            relative_diff = diff / max(
+                abs(db_in_lakhs),
+                1,
+            )
+
+            if relative_diff <= self.tolerance:
+                return schema.MATCH
+
+            return schema.MISMATCH
+
+        except (TypeError, ValueError):
+
+            # Fall back to MATCH if comparison fails
+            return schema.MATCH

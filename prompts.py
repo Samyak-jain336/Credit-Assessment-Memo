@@ -129,8 +129,18 @@ def build_section_prompt(
             "the reconciliation flags are unit-conversion artefacts (Crores vs Lakhs), "
             "not actual data gaps. Provide a definitive credit recommendation."
         )
-
-    if section_title in NON_FINANCIAL_SECTIONS:
+    elif section_title == "Data Consistency Review":
+        reconciliation_instruction = (
+            "6. For each field marked MISMATCH: before reporting it as a genuine "
+            "inconsistency, first check whether it is a unit-scaling difference "
+            "(database in Crores, evidence in Lakhs, multiply db value × 100) or "
+            "a label mismatch (e.g. cash_and_bank on Balance Sheet vs closing cash "
+            "on Cash Flow Statement — these are different line items, not a mismatch). "
+            "Only report as a true mismatch if the values differ after unit conversion. "
+            "For each field, state: the database value, the evidence value, whether "
+            "they reconcile after unit conversion, and your conclusion."
+        )
+    elif section_title in NON_FINANCIAL_SECTIONS:
         reconciliation_instruction = (
             "6. This section covers non-financial topics. "
             "Do NOT reference reconciliation results or flag missing financial data here. "
@@ -166,6 +176,21 @@ Instructions:
 4. Do not fabricate values.
 
 5. Produce polished business English.
+
+6. If evidence spans multiple financial years, always lead with the most
+   recent year. Explicitly call out year-on-year trends where figures
+   from multiple years are available.
+
+7. Do NOT state that information is unavailable if the evidence above
+   contains it. Read all evidence blocks carefully before concluding
+   anything is missing. If a Board of Directors list, KMP details,
+   loan schedule, or capital raising event appears in any evidence
+   block, include it in the analysis.
+
+8. For cash and bank balances, distinguish between freely available
+   cash and restricted cash (e.g. margin money held as fixed deposit
+   against letters of credit). If the evidence contains notes
+   breaking down the composition, include that detail.
 
 {reconciliation_instruction}
 """

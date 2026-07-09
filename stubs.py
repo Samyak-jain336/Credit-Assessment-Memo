@@ -50,6 +50,14 @@ class ReconciliationResult:
 
     remarks: str = ""
 
+    section_relevance: list[str] = field(
+        default_factory=lambda: [
+            "Financial Analysis",
+            "Data Consistency Review",
+            "Recommendation",
+        ]
+    )
+
 
 # ============================================================
 # CAM Section
