@@ -21,6 +21,7 @@ The design intentionally mirrors a future LangGraph workflow where each
 method can be converted into an independent graph node.
 """
 
+from dotenv import load_dotenv
 import os
 from typing import List
 
@@ -33,6 +34,10 @@ from vector_store import init_vector_store, query_chunks
 from docx_writer import DocumentWriter
 from stubs import RetrievedChunk
 from parser_agent import run_parser_agent
+
+load_dotenv()
+LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING")
+
 
 
 class CAMOrchestrator:

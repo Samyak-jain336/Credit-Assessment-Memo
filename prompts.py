@@ -45,16 +45,27 @@ def format_reconciliation(
     """
 
     lines = [
+        "NOTE: The 'Status' field below (MATCH/MISMATCH) is based only on "
+        "whether the field's keyword was found in evidence — it is NOT a "
+        "verified numeric comparison. You must independently verify the "
+        "actual numbers using the Evidence section above. Do not repeat "
+        "the Status field's MISMATCH label as fact without checking the "
+        "real figures yourself.\n"
         "NOTE: Database values are stored in CRORES. "
         "Financial statement evidence is expressed in LAKHS. "
-        "1 Crore = 100 Lakhs. Do NOT flag a unit-scaled match as a mismatch. "
-        "Before marking any field as mismatched, verify whether the values "
-        "reconcile after multiplying the database value by 100.\n"
-        "ADDITIONAL NOTE: cash_and_bank in the database refers to the Balance Sheet "
+        "1 Crore = 100 Lakhs. A value is a genuine match if it reconciles "
+        "after multiplying the database value by 100 — verify this using "
+        "the actual evidence numbers, not the Status label.\n"
+        "NOTE: cash_and_bank in the database refers to the Balance Sheet "
         "line item 'Cash and Bank Balances', NOT the closing cash balance on the "
         "Cash Flow Statement. These are legitimately different figures in Indian "
         "financial statements due to bank overdraft classification. Do not treat "
         "this difference as a mismatch — note the distinction instead.\n"
+        "NOTE: If evidence contains figures from different reporting periods "
+        "(e.g. quarterly, half-yearly, and full-year columns in the same table), "
+        "NEVER compare a partial-period figure (quarter/half-year) against a "
+        "full-year database value and call it a mismatch. Always identify which "
+        "column corresponds to the full financial year before comparing.\n"
     ]
 
     for result in results:

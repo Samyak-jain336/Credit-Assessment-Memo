@@ -104,22 +104,14 @@ def call_llm_json(prompt: str) -> dict:
 # ------------------------------------------------------------------ #
 
 def call_gemini(prompt: str, expect_json: bool = False) -> str:
-    """Call the Gemini LLM with retry-on-failure.
+    """Call Gemini with retry + automatic model fallback.
 
-    Retries up to 5 times on any exception, waiting 5 s, 10 s, 15 s, 20 s, 25 s
-    between attempts (same backoff curve used in vector_store.py's
-    embedding retry helper).
+    Attempt order:
+      1. gemini-2.5-flash — up to 5 attempts, 5s/10s/15s/20s/25s backoff
+      2. gemini-3.1-flash-lite — up to 5 attempts, 5s/10s/15s/20s/25s backoff
+         (triggered automatically if all 5 attempts on primary model fail)
 
-    Args:
-        prompt:      The user prompt to send to Gemini.
-        expect_json: If True, appends an instruction asking the model
-                     to respond with valid JSON only (mirrors call_llm).
-
-    Returns:
-        The model response as a plain string.
-
-    Raises:
-        RuntimeError: If all 5 attempts fail.
+    Raises RuntimeError only if both models exhaust all attempts.
     """
     if expect_json:
         prompt = (
@@ -129,26 +121,35 @@ def call_gemini(prompt: str, expect_json: bool = False) -> str:
         )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    max_retries = 5
+
+    models_to_try = [
+        GEMINI_MODEL,             # gemini-2.5-flash (from config.py)
+        "gemini-3.1-flash-lite",  # GA as of May 8 2026 — faster, cheaper fallback
+    ]
+
     last_error = None
 
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-            )
-            return response.text
-        except Exception as e:
-            last_error = e
-            if attempt == max_retries - 1:
-                break
-            wait = 5 * (attempt + 1)  # 5s, 10s, 15s
-            print(f"Gemini call failed ({e}), retrying in {wait}s...")
-            time.sleep(wait)
+    for model in models_to_try:
+        print(f"  Trying Gemini model: {model}")
+        for attempt in range(5):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                )
+                return response.text
+            except Exception as e:
+                last_error = e
+                if attempt == 4:
+                    print(f"  {model} failed all 5 attempts. Last error: {e}")
+                else:
+                    wait = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s, 25s
+                    print(f"  {model} attempt {attempt + 1} failed ({e}), "
+                          f"retrying in {wait}s...")
+                    time.sleep(wait)
 
     raise RuntimeError(
-        f"All Gemini attempts failed. Last error: {last_error}"
+        f"All Gemini models failed. Last error: {last_error}"
     )
 
 
