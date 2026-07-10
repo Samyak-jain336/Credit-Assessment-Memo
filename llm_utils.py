@@ -130,7 +130,6 @@ def call_gemini(prompt: str, expect_json: bool = False) -> str:
     last_error = None
 
     for model in models_to_try:
-        print(f"  Trying Gemini model: {model}")
         for attempt in range(5):
             try:
                 response = client.models.generate_content(
@@ -143,7 +142,7 @@ def call_gemini(prompt: str, expect_json: bool = False) -> str:
                 if attempt == 4:
                     print(f"  {model} failed all 5 attempts. Last error: {e}")
                 else:
-                    wait = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s, 25s
+                    wait = 5 * (attempt + 1)
                     print(f"  {model} attempt {attempt + 1} failed ({e}), "
                           f"retrying in {wait}s...")
                     time.sleep(wait)

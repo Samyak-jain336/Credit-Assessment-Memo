@@ -136,17 +136,103 @@ class DocumentWriter:
             p.alignment = WD_PARAGRAPH_ALIGNMENT.JUSTIFY
             _render_inline(p, line)
 
+    def _add_reconciliation_table(self, reconciliation_results):
+        """Render reconciliation results as a Word table.
+        Called only for the Data Consistency Review section.
+        No LLM involved — renders directly from ReconciliationResult
+        objects, which are structured Python data from reconciliation.py.
+        """
+        table = self.document.add_table(rows=1, cols=4)
+        table.style = 'Light Grid Accent 1'
+
+        hdr = table.rows[0].cells
+        hdr[0].text = 'Field'
+        hdr[1].text = 'Database Value (Cr)'
+        hdr[2].text = 'Evidence Found'
+        hdr[3].text = 'Status'
+
+        for cell in hdr:
+            for p in cell.paragraphs:
+                for r in p.runs:
+                    r.bold = True
+
+        for result in reconciliation_results:
+            row = table.add_row().cells
+            row[0].text = result.field_name.replace('_', ' ').title()
+            row[1].text = (
+                str(result.database_value)
+                if result.database_value is not None
+                else 'N/A'
+            )
+            row[2].text = (
+                str(result.extracted_value)
+                if result.extracted_value
+                else 'Not found'
+            )
+            row[3].text = result.status.upper()
+
+        self.document.add_paragraph()
+
+    def _add_generic_table(self, table_data: list, columns: list):
+        """Render LLM-generated structured table data as a Word table.
+        Called after the narrative for Financial Analysis, Banking
+        Conduct, and Risk Assessment when table_data is present on
+        the CAMSection object.
+        """
+        if not table_data:
+            return
+
+        table = self.document.add_table(rows=1, cols=len(columns))
+        table.style = 'Light Grid Accent 1'
+
+        hdr = table.rows[0].cells
+        for i, col in enumerate(columns):
+            hdr[i].text = col.replace('_', ' ').title()
+            for p in hdr[i].paragraphs:
+                for r in p.runs:
+                    r.bold = True
+
+        for row_data in table_data:
+            row = table.add_row().cells
+            for i, col in enumerate(columns):
+                value = row_data.get(col)
+                row[i].text = str(value) if value is not None else '—'
+
+        self.document.add_paragraph()
+
     def write(
         self,
         company_name: str,
         fiscal_year: int,
         sections: list,
         output_path: str,
+        reconciliation_results=None,
     ) -> str:
+        """
+        Generate the final CAM document.
+
+        Data Consistency Review is rendered as a code-generated table
+        directly from reconciliation_results — no LLM prose used for
+        that section. All other sections render narrative first, then
+        an LLM-generated table if table_data is present on the section.
+        """
+        import schema
+
         self._add_title(company_name, fiscal_year)
 
         for section in sections:
-            self._add_section(section)
+            if section.title == "Data Consistency Review" and reconciliation_results:
+                heading = self.document.add_heading(section.title, level=1)
+                for run in heading.runs:
+                    run.font.size = Pt(14)
+                    run.font.bold = True
+                self._add_reconciliation_table(reconciliation_results)
+            else:
+                self._add_section(section)
+                if section.table_data:
+                    columns = schema.SECTION_TABLE_SCHEMA.get(section.title)
+                    if columns:
+                        self._add_generic_table(section.table_data, columns)
 
         self.document.save(output_path)
         return output_path

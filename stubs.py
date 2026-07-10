@@ -73,6 +73,8 @@ class CAMSection:
 
     evidence: List[RetrievedChunk] = field(default_factory=list)
 
+    table_data: Optional[List[Dict[str, Any]]] = None
+
 
 # ============================================================
 # Company Bundle

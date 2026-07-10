@@ -12,6 +12,8 @@ Each section is generated independently so the orchestration layer
 (LangGraph) can run them sequentially or in parallel.
 """
 
+import re
+import json
 from typing import List
 
 from llm_utils import call_gemini
@@ -48,6 +50,16 @@ class SectionGenerator:
     ) -> CAMSection:
         """
         Generate a single CAM section.
+
+        For sections listed in schema.SECTION_TABLE_SCHEMA, the LLM
+        response is expected to contain both a narrative block and a
+        <TABLE>...</TABLE> JSON block. The TABLE block is extracted,
+        parsed, and stored in CAMSection.table_data. It is stripped
+        from the narrative so it does not appear twice in the docx.
+
+        If the TABLE block is missing or malformed JSON, table_data
+        is set to None and the section ships as prose only — the
+        narrative is never blocked by a table parse failure.
         """
 
         user_prompt = build_section_prompt(
@@ -64,10 +76,23 @@ class SectionGenerator:
 
         response = call_gemini(full_prompt)
 
+        # Extract structured table block if present
+        table_data = None
+        match = re.search(r'<TABLE>(.*?)</TABLE>', response, re.DOTALL)
+        if match:
+            try:
+                table_data = json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                # Malformed JSON — ship prose only, never crash the section
+                table_data = None
+            # Strip TABLE block from narrative regardless of parse result
+            response = response[:match.start()] + response[match.end():]
+
         return CAMSection(
             title=title,
-            content=response,
+            content=response.strip(),
             evidence=retrieved_chunks,
+            table_data=table_data,
         )
 
     # ---------------------------------------------------------

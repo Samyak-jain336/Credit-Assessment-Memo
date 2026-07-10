@@ -158,16 +158,23 @@ CAM_SECTIONS = {
 SECTION_QUERIES = {
     "Applicant Overview": [
         "company overview",
-        "registered office",
+        "registered office address",
         "constitution of business",
+        "managing director name",
+        "chief financial officer name",
+        "company secretary name",
+        "key managerial personnel",
+        "remuneration key managerial",
     ],
     "Company Background": [
         "incorporation history",
         "business activities",
-        "board of directors",
-        "key managerial personnel",
+        "managing director chairman",
+        "board of directors members",
+        "key managerial personnel designation",
         "directors report",
-        "independent director",
+        "independent director appointed",
+        "whole time director executive",
     ],
     "Financial Analysis": [
         "revenue from operations",
@@ -221,4 +228,10 @@ SECTION_QUERIES = {
         "current ratio",
         "cash flow from operations",
     ],
+}
+
+SECTION_TABLE_SCHEMA = {
+    "Financial Analysis": ["metric", "fy25", "fy24", "change"],
+    "Banking Conduct": ["lender", "facility_type", "amount_lakhs", "roi", "security"],
+    "Risk Assessment": ["ratio", "fy25", "fy24", "trend"],
 }

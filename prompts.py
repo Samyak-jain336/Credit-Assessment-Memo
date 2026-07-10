@@ -9,6 +9,7 @@ large prompt strings and makes prompt updates easy.
 
 from typing import List
 from stubs import RetrievedChunk, ReconciliationResult
+import schema
 
 
 # ---------------------------------------------------------
@@ -134,7 +135,7 @@ def build_section_prompt(
 
     if section_title == "Recommendation":
         reconciliation_instruction = (
-            "6. Base the recommendation on the complete financial picture "
+            "9. Base the recommendation on the complete financial picture "
             "drawn from the Financial Analysis and Risk Assessment sections. "
             "Do NOT refuse a recommendation due to data mismatches — "
             "the reconciliation flags are unit-conversion artefacts (Crores vs Lakhs), "
@@ -142,7 +143,7 @@ def build_section_prompt(
         )
     elif section_title == "Data Consistency Review":
         reconciliation_instruction = (
-            "6. For each field marked MISMATCH: before reporting it as a genuine "
+            "9. For each field marked MISMATCH: before reporting it as a genuine "
             "inconsistency, first check whether it is a unit-scaling difference "
             "(database in Crores, evidence in Lakhs, multiply db value × 100) or "
             "a label mismatch (e.g. cash_and_bank on Balance Sheet vs closing cash "
@@ -153,15 +154,35 @@ def build_section_prompt(
         )
     elif section_title in NON_FINANCIAL_SECTIONS:
         reconciliation_instruction = (
-            "6. This section covers non-financial topics. "
+            "9. This section covers non-financial topics. "
             "Do NOT reference reconciliation results or flag missing financial data here. "
             "Confine your response strictly to the evidence provided above."
         )
     else:
         reconciliation_instruction = (
-            "6. Reference reconciliation results where directly relevant to this section. "
+            "9. Reference reconciliation results where directly relevant to this section. "
             "Remember database values are in Crores, evidence is in Lakhs (1 Cr = 100 Lakhs). "
             "Do not flag a unit-scaled match as a mismatch."
+        )
+
+    # Table instruction — only for sections that have a defined schema
+    table_instruction = ""
+    if section_title in schema.SECTION_TABLE_SCHEMA:
+        columns = schema.SECTION_TABLE_SCHEMA[section_title]
+        table_instruction = (
+            f"\n\nAFTER the narrative text, append a structured data table "
+            f"wrapped in <TABLE></TABLE> tags. The table must be a valid JSON "
+            f"array of objects, one object per row, using EXACTLY these keys: "
+            f"{columns}. "
+            f"Use ONLY figures explicitly stated in the evidence above — never "
+            f"calculate, estimate, or infer a value not directly present in "
+            f"the evidence text. If a value for a given key is not available "
+            f"in the evidence, use null rather than guessing. "
+            f"Example format: "
+            f'<TABLE>[{{"metric": "Total Revenue", "fy25": "12,482.01", '
+            f'"fy24": "9,083.93", "change": "+37.4%"}}]</TABLE> '
+            f"The <TABLE> block must appear AFTER all narrative text and must "
+            f"not be embedded inside any paragraph."
         )
 
     return f"""
@@ -204,6 +225,28 @@ Instructions:
    breaking down the composition, include that detail.
 
 {reconciliation_instruction}
+
+10. For registered office address, CIN, and incorporation details,
+    use ONLY evidence tagged as [Source: annual_report] or
+    [Source: audit_report]. Never use addresses or location
+    details from exchange filing documents (board_meeting_outcome,
+    shareholders_meeting, preferential_issue) — these filings
+    contain NSE/SEBI correspondence addresses which are NOT the
+    company's registered office. If the registered office address
+    in the annual report evidence conflicts with any address found
+    in exchange filing evidence, always prefer the annual report.
+
+11. If a person's name, designation, or role appears with
+    certainty in ANY evidence block for this section, do NOT
+    state that it is unavailable or unclear. Read every evidence
+    block in full before concluding any piece of information is
+    missing. In particular: if the CFO, MD, or Company Secretary
+    is named explicitly in any evidence block — including
+    remuneration tables, KMP disclosures, or signing authority
+    sections — that name must be used. Never say a designation
+    is "not clearly discernible" if the name appears anywhere
+    in the supplied evidence.
+{table_instruction}
 """
 
 

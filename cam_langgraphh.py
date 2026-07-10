@@ -104,6 +104,7 @@ class CAMOrchestrator:
             company_name,
             fiscal_year,
             sections,
+            reconciliation_results,
         )
 
         return output
@@ -233,6 +234,7 @@ class CAMOrchestrator:
         company_name,
         fiscal_year,
         sections,
+        reconciliation_results=None,
     ):
         """
         Write final CAM report as a .docx file.
@@ -243,7 +245,13 @@ class CAMOrchestrator:
         output_path = f"{company_name.replace(' ', '_')}_CAM.docx"
 
         writer = DocumentWriter()
-        writer.write(company_name, fiscal_year, sections, output_path)
+        writer.write(
+            company_name,
+            fiscal_year,
+            sections,
+            output_path,
+            reconciliation_results,
+        )
 
         return output_path
 
