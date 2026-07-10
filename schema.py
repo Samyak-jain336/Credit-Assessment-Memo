@@ -191,10 +191,11 @@ SECTION_QUERIES = {
     "Banking Conduct": [
         "average monthly balance",
         "cheque bounce",
-        "emi deduction",
-        "term loan vehicle machinery",
-        "secured loans bank",
-        "repayment schedule",
+        "working capital facility",
+        "cash credit overdraft limit",
+        "letter of credit bank guarantee",
+        "term loan repayment schedule",
+        "sanctioned limit drawing power",
     ],
     "Tax and Statutory Compliance": [
         "income tax return",
@@ -223,10 +224,12 @@ SECTION_QUERIES = {
     ],
     "Data Consistency Review": [],
     "Recommendation": [
-        "credit recommendation",
-        "debt to equity ratio",
-        "current ratio",
-        "cash flow from operations",
+        "net cash flow from operating activities",
+        "debt service coverage ratio",
+        "cash flow from operations negative",
+        "borrowings repayment",
+        "going concern",
+        "contingent liabilities",
     ],
 }
 

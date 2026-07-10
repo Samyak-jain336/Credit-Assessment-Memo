@@ -135,11 +135,15 @@ def build_section_prompt(
 
     if section_title == "Recommendation":
         reconciliation_instruction = (
-            "9. Base the recommendation on the complete financial picture "
-            "drawn from the Financial Analysis and Risk Assessment sections. "
-            "Do NOT refuse a recommendation due to data mismatches — "
-            "the reconciliation flags are unit-conversion artefacts (Crores vs Lakhs), "
-            "not actual data gaps. Provide a definitive credit recommendation."
+            "9. Base the recommendation strictly on debt serviceability, "
+            "not on balance sheet optics. A low Debt-to-Equity ratio "
+            "achieved through equity injection does not offset negative "
+            "operating cash flow or a DSCR below 1.0. If DSCR < 1.0 "
+            "and operating cash flow is negative, the recommendation "
+            "must reflect that the company cannot service its debt from "
+            "operations — regardless of any balance sheet improvements. "
+            "Do NOT issue a positive recommendation that contradicts "
+            "the cash flow and debt coverage evidence."
         )
     elif section_title == "Data Consistency Review":
         reconciliation_instruction = (
@@ -169,15 +173,35 @@ def build_section_prompt(
     table_instruction = ""
     if section_title in schema.SECTION_TABLE_SCHEMA:
         columns = schema.SECTION_TABLE_SCHEMA[section_title]
+
+        # Banking Conduct needs an explicit warning because balance sheet
+        # chunks retrieved alongside loan details contain trade receivables
+        # and other asset figures that have been confused with loan amounts
+        # in prior runs — a fatal underwriting error.
+        if section_title == "Banking Conduct":
+            grounding_note = (
+                "CRITICAL: The amount_lakhs column must contain ONLY sanctioned "
+                "loan/facility limits or outstanding borrowing amounts. "
+                "Do NOT populate this column with trade receivables, inventories, "
+                "current assets, or any other balance sheet asset figure — these "
+                "are not banking facilities. If you cannot find a clear sanctioned "
+                "limit or outstanding amount for a lender in the evidence, use null."
+            )
+        else:
+            grounding_note = (
+                "Use ONLY figures explicitly stated in the evidence above — "
+                "never calculate, estimate, or infer a value not directly "
+                "present in the evidence text."
+            )
+
         table_instruction = (
             f"\n\nAFTER the narrative text, append a structured data table "
             f"wrapped in <TABLE></TABLE> tags. The table must be a valid JSON "
             f"array of objects, one object per row, using EXACTLY these keys: "
             f"{columns}. "
-            f"Use ONLY figures explicitly stated in the evidence above — never "
-            f"calculate, estimate, or infer a value not directly present in "
-            f"the evidence text. If a value for a given key is not available "
-            f"in the evidence, use null rather than guessing. "
+            f"{grounding_note} "
+            f"If a value for a given key is not available in evidence, use "
+            f"null rather than guessing. "
             f"Example format: "
             f'<TABLE>[{{"metric": "Total Revenue", "fy25": "12,482.01", '
             f'"fy24": "9,083.93", "change": "+37.4%"}}]</TABLE> '
