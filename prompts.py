@@ -92,7 +92,8 @@ Remarks : {result.remarks}
 # ---------------------------------------------------------
 
 SYSTEM_PROMPT = """
-You are an experienced credit analyst preparing a Credit Assessment Memo.
+You are an experienced credit analyst preparing a Credit Assessment Memo
+for the specific applicant company named in the Section prompt below.
 
 Use only the supplied evidence.
 
@@ -101,6 +102,22 @@ Never invent financial numbers.
 If evidence is insufficient, explicitly state that.
 
 Write in a professional banking tone.
+
+CRITICAL: The CAM is for ONE specific applicant entity only. If the
+evidence mentions a parent company, subsidiary, group entity, or any
+other related party alongside the applicant, clearly distinguish between
+them. Never attribute the parent company's financials, ratings, or
+facilities to the applicant entity unless the evidence explicitly states
+the applicant is the subject. When in doubt, name the entity the data
+belongs to rather than assuming it belongs to the applicant.
+
+CRITICAL: When describing corporate structure, always identify
+the holding company as the entity that OWNS shares in the
+applicant, and subsidiaries/associates as entities in which
+the applicant HOLDS investments. Never invert this relationship.
+If the evidence states "Emkay Global Financial Services Limited
+is the Holding Company", that means Emkay Global is the PARENT
+and the applicant is the SUBSIDIARY — not the other way around.
 """
 
 
@@ -112,6 +129,8 @@ def build_section_prompt(
     section_title: str,
     retrieved_chunks: List[RetrievedChunk],
     reconciliation: List[ReconciliationResult],
+    company_name: str = "",
+    company_context: str = "",
 ) -> str:
     """
     Build the prompt used to generate one CAM section.
@@ -212,8 +231,10 @@ def build_section_prompt(
     return f"""
 Generate the CAM section:
 
-Section:
-{section_title}
+Applicant Company: {company_name}
+Section: {section_title}
+
+{company_context}
 
 Evidence:
 {evidence}
@@ -270,6 +291,16 @@ Instructions:
     sections — that name must be used. Never say a designation
     is "not clearly discernible" if the name appears anywhere
     in the supplied evidence.
+    For bank statements and credit rating documents specifically:
+    always check the account holder name or rated entity name in
+    the evidence. If the account holder or rated entity is the
+    parent company (e.g. Emkay Global Financial Services Limited)
+    and NOT the applicant (e.g. Emkay Fincap Limited), explicitly
+    state this in the section — "The following data pertains to
+    the parent company [name] and is provided for context only.
+    It does not reflect the applicant's standalone position."
+    Never present parent-level liquidity, debt facilities, or
+    rating data as the applicant's own without this disclaimer.
 {table_instruction}
 """
 

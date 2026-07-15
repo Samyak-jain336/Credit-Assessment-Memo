@@ -47,6 +47,8 @@ class SectionGenerator:
         title: str,
         retrieved_chunks: List[RetrievedChunk],
         reconciliation_results: List[ReconciliationResult],
+        company_name: str = "",
+        company_context: str = "",
     ) -> CAMSection:
         """
         Generate a single CAM section.
@@ -66,6 +68,8 @@ class SectionGenerator:
             title,
             retrieved_chunks,
             reconciliation_results,
+            company_name=company_name,
+            company_context=company_context,
         )
 
         full_prompt = (
@@ -104,6 +108,8 @@ class SectionGenerator:
         section_titles: List[str],
         retrieved_chunks: List[RetrievedChunk],
         reconciliation_results: List[ReconciliationResult],
+        company_name: str = "",
+        company_context: str = "",
     ) -> List[CAMSection]:
         """
         Generate every requested CAM section.
@@ -139,6 +145,8 @@ class SectionGenerator:
                 title,
                 chunks_for_section,
                 relevant_reconciliation,
+                company_name=company_name,
+                company_context=company_context,
             )
 
             sections.append(section)

@@ -48,6 +48,67 @@ def detect_statement_type(page_text: str) -> str:
 
     return "unknown"
 
+def _detect_column_layout(page) -> str:
+    """Detect whether a page has a two-column layout.
+
+    Splits the page into left and right halves using page.within_bbox,
+    checks if both halves have more than 150 characters of stripped text,
+    computes the ratio of min to max length, and returns 'two_column' if
+    both conditions pass (ratio > 0.3), otherwise returns 'single'.
+    """
+    width = page.width
+    height = page.height
+
+    left_crop = page.within_bbox((0, 0, width / 2, height))
+    right_crop = page.within_bbox((width / 2, 0, width, height))
+
+    left_text = (left_crop.extract_text() or "").strip()
+    right_text = (right_crop.extract_text() or "").strip()
+
+    left_len = len(left_text)
+    right_len = len(right_text)
+
+    # Raised thresholds to avoid false positives on this PDF format:
+    # - Many Indian annual reports have a decorative sidebar
+    #   ("CORPORATE OVERVIEW | STATUTORY REPORTS | FINANCIAL STATEMENTS")
+    #   on every page that reads as a right-hand column but is not
+    #   actual two-column content. Raising min chars to 400 per side
+    #   filters these out since the sidebar is typically < 200 chars.
+    # - Ratio raised to 0.6 to avoid splitting landscape/rotated table
+    #   pages down the middle, which produces reversed garbled text
+    #   (e.g. "erusolcsiD" instead of "Disclosure").
+    if left_len > 400 and right_len > 400:
+        ratio = min(left_len, right_len) / max(left_len, right_len)
+        if ratio > 0.6:
+            return "two_column"
+
+    return "single"
+
+
+def _extract_single_column(page) -> str:
+    """Extract text from a single-column page."""
+    return page.extract_text() or ""
+
+
+def _extract_two_column(page) -> str:
+    """Extract text from a two-column page by reading left then right.
+
+    Extracts left half (x: 0 to width/2) and right half (x: width/2 to width)
+    using page.within_bbox, then returns left text stripped + newline + right
+    text stripped.
+    """
+    width = page.width
+    height = page.height
+
+    left_crop = page.within_bbox((0, 0, width / 2, height))
+    right_crop = page.within_bbox((width / 2, 0, width, height))
+
+    left_text = (left_crop.extract_text() or "").strip()
+    right_text = (right_crop.extract_text() or "").strip()
+
+    return left_text + "\n" + right_text
+
+
 def preprocess_pages(pdf) -> list[dict]:
     """Convert a pdfplumber PDF into a flat list of logical page dicts.
 
@@ -60,7 +121,11 @@ def preprocess_pages(pdf) -> list[dict]:
     logical_page_num = 1
 
     for original_page_num, page in enumerate(pdf.pages, start=1):
-        raw_text = page.extract_text() or ""
+        layout = _detect_column_layout(page)
+        if layout == "two_column":
+            raw_text = _extract_two_column(page)
+        else:
+            raw_text = _extract_single_column(page)
 
         result.append({
             "page_obj": page,

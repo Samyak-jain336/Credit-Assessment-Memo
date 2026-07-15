@@ -157,14 +157,15 @@ CAM_SECTIONS = {
 
 SECTION_QUERIES = {
     "Applicant Overview": [
-        "company overview",
-        "registered office address",
+        "registered office address city pin",
+        "corporate information cin",
         "constitution of business",
         "managing director name",
         "chief financial officer name",
         "company secretary name",
         "key managerial personnel",
         "remuneration key managerial",
+        "annual general meeting notice",
     ],
     "Company Background": [
         "incorporation history",
@@ -207,15 +208,14 @@ SECTION_QUERIES = {
         "emphasis of matter",
     ],
     "Risk Assessment": [
-        "borrowings and long term debt",
-        "contingent liabilities",
-        "related party transactions",
-        "net profit",
-        "cash flow from operations",
-        "debt to equity ratio",
-        "initial public offering ipo capital raised",
-        "equity share capital rights issue proceeds",
-        "letter of credit margin money",
+        "standalone borrowings long term debt",
+        "contingent liabilities disclosed",
+        "related party transactions arm length",
+        "standalone profit after tax",
+        "standalone cash flow from operating",
+        "debt to equity ratio calculated",
+        "net worth equity capital reserves",
+        "loan advances secured unsecured",
     ],
     "Collateral": [
         "collateral security",

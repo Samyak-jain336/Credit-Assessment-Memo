@@ -127,6 +127,96 @@ class CAMOrchestrator:
             fiscal_year,
         )
 
+    def build_company_context(
+        self,
+        company_bundle: dict,
+    ) -> str:
+        """Build a structured factual context block from MySQL data.
+
+        Injected into every section prompt as the single source of
+        truth for financial figures, unit, and company identity.
+        Prevents the LLM from re-deriving these facts independently
+        in each section and producing contradictions or unit errors.
+
+        All values come from MySQL — no hardcoding. Unit warning
+        appears only for companies whose financials table stores a
+        non-standard unit (e.g. 'hundreds', 'thousands') so the LLM
+        knows not to re-convert already-converted Crores figures,
+        and knows how to convert raw chunk figures it encounters.
+        """
+        company = company_bundle.get("company") or {}
+        financials = company_bundle.get("financials")
+        bank_stmts = company_bundle.get("bank_statements") or []
+
+        lines = [
+            "=== VERIFIED COMPANY FACTS (pre-converted, from internal database) ===",
+            f"Applicant: {company.get('company_name', 'N/A')}",
+            f"CIN: {company.get('cin', 'N/A')}",
+        ]
+
+        if financials:
+            unit = financials.get("unit") or "Crores"
+            currency = financials.get("currency") or "INR"
+            fiscal_year = financials.get("fiscal_year", "N/A")
+
+            lines.append(f"Fiscal Year: {fiscal_year}")
+            lines.append(f"All figures below are in: {currency} Crores")
+            lines.append(f"(Original source unit in documents: {unit})")
+            lines.append("")
+
+            def fmt(val):
+                return str(val) if val is not None else "N/A"
+
+            lines.append(f"Revenue:           {fmt(financials.get('revenue'))} Crores")
+            lines.append(f"Net Profit:        {fmt(financials.get('net_profit'))} Crores")
+            lines.append(f"Borrowings:        {fmt(financials.get('borrowings'))} Crores")
+            lines.append(f"Cash and Bank:     {fmt(financials.get('cash_and_bank'))} Crores")
+            lines.append(f"CFO:               {fmt(financials.get('cfo'))} Crores")
+            lines.append(f"Net Cash Flow:     {fmt(financials.get('net_cash_flow'))} Crores")
+            lines.append(f"Trade Receivables: {fmt(financials.get('trade_receivables'))} Crores")
+            lines.append(f"Inventory:         {fmt(financials.get('inventory'))} Crores")
+
+            # Unit warning — only appears when source documents use a
+            # non-standard unit. Derived from MySQL, no hardcoding.
+            if unit.lower() not in ("crores", "lakhs"):
+                # Compute conversion factor from unit string dynamically
+                unit_lower = unit.lower().strip()
+                if "hundred" in unit_lower:
+                    factor_desc = "divide by 10,000,000"
+                elif "thousand" in unit_lower:
+                    factor_desc = "divide by 100,000"
+                elif "million" in unit_lower:
+                    factor_desc = "divide by 10"
+                else:
+                    factor_desc = f"convert from '{unit}' to Crores"
+
+                lines.append("")
+                lines.append(
+                    f"UNIT WARNING: Source documents report in '{unit}'. "
+                    f"The figures ABOVE are already converted to Crores by "
+                    f"the ingestion pipeline — do NOT convert them again. "
+                    f"When you encounter raw figures from evidence chunks "
+                    f"(not from the list above), {factor_desc} to get Crores. "
+                    f"Always state (Standalone) or (Consolidated) alongside "
+                    f"any figure from evidence to distinguish the two sets."
+                )
+
+        if bank_stmts:
+            lines.append("")
+            lines.append(f"Bank statements on file: {len(bank_stmts)}")
+            for bs in bank_stmts:
+                period_from = bs.get("statement_period_from", "?")
+                period_to = bs.get("statement_period_to", "?")
+                lines.append(
+                    f"  - {bs.get('bank_name', 'Unknown Bank')} | "
+                    f"{bs.get('account_type', '?')} | "
+                    f"A/C: {bs.get('account_number', '?')} | "
+                    f"{period_from} to {period_to}"
+                )
+
+        lines.append("=== END VERIFIED FACTS ===")
+        return "\n".join(lines)
+
     def retrieve_chunks(
         self,
         company_name,
@@ -142,15 +232,33 @@ class CAMOrchestrator:
         print("Retrieving supporting evidence per section...")
         section_chunks = {}
 
+        # Sections where mixing standalone and consolidated chunks produces
+        # contradictory or inflated figures. Restricted to standalone only.
+        STANDALONE_ONLY_SECTIONS = {
+            "Financial Analysis",
+            "Risk Assessment",
+            "Recommendation",
+        }
+
         for title, queries in schema.SECTION_QUERIES.items():
             chunks = []
             seen_ids = set()
+
+            # Apply statement_type filter for financial sections to prevent
+            # consolidated group figures from contaminating standalone analysis.
+            if title in STANDALONE_ONLY_SECTIONS:
+                section_filter = {
+                    "company_name": company_name,
+                    "statement_type": "standalone",
+                }
+            else:
+                section_filter = {"company_name": company_name}
 
             for q in queries:
                 results = query_chunks(
                     self.collection,
                     query_text=q,
-                    filters={"company_name": company_name},
+                    filters=section_filter,
                     n_results=2,
                 )
                 for r in results:
@@ -223,10 +331,17 @@ class CAMOrchestrator:
 
         titles = list(schema.CAM_SECTIONS.values())
 
+        # Build the grounded DB context block and inject into every section.
+        # Without this the LLM has no authoritative figures and reads raw
+        # chunk numbers (which may be in Lakhs or from a subsidiary) as facts.
+        company_context = self.build_company_context(company_bundle)
+
         return self.generator.generate_all_sections(
             titles,
             section_chunks,
             reconciliation_results,
+            company_name=company_bundle["company"]["company_name"],
+            company_context=company_context,
         )
 
     def write_document(
@@ -271,11 +386,11 @@ if __name__ == "__main__":
 
     orchestrator.generate_cam(
 
-        company_name="Durlax Top Surface Limited",
+        company_name="FSN E-Commerce",
 
         fiscal_year=2025,
 
-        folder_path=r"C:\Users\samya\OneDrive\Documents\GitHub\CreditAssessmentMemo\Inputs\Durlax Top Surface Limited",
+        folder_path=r"Inputs\FSN E-Commerce",
 
         gemini_api_key=os.environ.get("GEMINI_API_KEY"),
 

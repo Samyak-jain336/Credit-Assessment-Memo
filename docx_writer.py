@@ -142,7 +142,7 @@ class DocumentWriter:
         No LLM involved — renders directly from ReconciliationResult
         objects, which are structured Python data from reconciliation.py.
         """
-        table = self.document.add_table(rows=1, cols=4)
+        table = self.document.add_table(rows=1, cols=5)
         table.style = 'Light Grid Accent 1'
 
         hdr = table.rows[0].cells
@@ -150,6 +150,7 @@ class DocumentWriter:
         hdr[1].text = 'Database Value (Cr)'
         hdr[2].text = 'Evidence Found'
         hdr[3].text = 'Status'
+        hdr[4].text = 'Remarks'
 
         for cell in hdr:
             for p in cell.paragraphs:
@@ -170,6 +171,7 @@ class DocumentWriter:
                 else 'Not found'
             )
             row[3].text = result.status.upper()
+            row[4].text = result.remarks if result.remarks else "—"
 
         self.document.add_paragraph()
 
