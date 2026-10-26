@@ -97,32 +97,3 @@ class CompanyBundle:
     bank_statements: List[Dict[str, Any]]
 
 
-# ============================================================
-# Graph State
-# ============================================================
-
-@dataclass
-class CAMGraphState:
-    """
-    Shared state passed between LangGraph nodes.
-    """
-
-    company_name: str
-
-    fiscal_year: int
-
-    company_bundle: Optional[CompanyBundle] = None
-
-    rag_chunks: List[RetrievedChunk] = field(default_factory=list)
-
-    reconciliation_results: List[
-        ReconciliationResult
-    ] = field(default_factory=list)
-
-    generated_sections: List[
-        CAMSection
-    ] = field(default_factory=list)
-
-    final_document_path: Optional[str] = None
-
-    errors: List[str] = field(default_factory=list)

@@ -25,10 +25,6 @@ def run_audit_report_ingestion(
         company_name=company_name,
         fiscal_year=fiscal_year,
     )
-
-    # Overwrite the document_type stamped by run_annual_report_ingestion()
-    # since that function hardcodes "annual_report". Every other field
-    # (company_name, fiscal_year, chunk_index, page_type etc.) is correct.
     for chunk in chunks:
         chunk["document_type"] = "audit_report"
 

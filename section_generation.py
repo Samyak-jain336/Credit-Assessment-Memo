@@ -6,8 +6,7 @@ Generates individual CAM sections using:
 - Retrieved evidence
 - Reconciliation results
 - Shared prompt templates
-- Groq LLM
-
+- Provider-agnostic LLM via llm_utils.call_llm_primary
 Each section is generated independently so the orchestration layer
 (LangGraph) can run them sequentially or in parallel.
 """
@@ -16,7 +15,7 @@ import re
 import json
 from typing import List
 
-from llm_utils import call_gemini
+from llm_utils import call_llm_primary
 
 from prompts import (
     SYSTEM_PROMPT,
@@ -78,7 +77,7 @@ class SectionGenerator:
             + user_prompt
         )
 
-        response = call_gemini(full_prompt)
+        response = call_llm_primary(full_prompt)
 
         # Extract structured table block if present
         table_data = None
@@ -114,8 +113,9 @@ class SectionGenerator:
         """
         Generate every requested CAM section.
 
-        Only reconciliation results relevant to the current section
-        are passed to the LLM.
+        All reconciliation results are passed to every section.
+        Section-level relevance filtering is handled downstream
+        in prompts.py via NON_FINANCIAL_SECTIONS.
         """
 
         sections = []
@@ -134,12 +134,14 @@ class SectionGenerator:
 
             chunks_for_section = section_chunks.get(title, [])
 
-            # Only send reconciliation results relevant to this section.
-            relevant_reconciliation = [
-                result
-                for result in reconciliation_results
-                if title in result.section_relevance
-            ]
+            # Pass all reconciliation results to every section.
+            # ReconciliationResult has no section_relevance field — the old
+            # filter was silently returning [] for every section, meaning the
+            # LLM generated all sections with zero reconciliation context.
+            # Section-level filtering is already handled in prompts.py via
+            # NON_FINANCIAL_SECTIONS, which instructs the LLM to ignore
+            # reconciliation data where it is not relevant.
+            relevant_reconciliation = reconciliation_results
 
             section = self.generate_section(
                 title,

@@ -67,16 +67,6 @@ def _detect_column_layout(page) -> str:
 
     left_len = len(left_text)
     right_len = len(right_text)
-
-    # Raised thresholds to avoid false positives on this PDF format:
-    # - Many Indian annual reports have a decorative sidebar
-    #   ("CORPORATE OVERVIEW | STATUTORY REPORTS | FINANCIAL STATEMENTS")
-    #   on every page that reads as a right-hand column but is not
-    #   actual two-column content. Raising min chars to 400 per side
-    #   filters these out since the sidebar is typically < 200 chars.
-    # - Ratio raised to 0.6 to avoid splitting landscape/rotated table
-    #   pages down the middle, which produces reversed garbled text
-    #   (e.g. "erusolcsiD" instead of "Disclosure").
     if left_len > 400 and right_len > 400:
         ratio = min(left_len, right_len) / max(left_len, right_len)
         if ratio > 0.6:
@@ -198,22 +188,12 @@ def chunk_all_pages(extracted_pages: list[dict]) -> list[dict]:
         page_num = extracted_page["page_number"]
 
         if page_type == "table":
-            # Tables are kept as a single chunk so that row-column
-            # relationships (e.g. "Revenue for FY2024 is 5907.39")
-            # are not broken across chunk boundaries.
             chunks = chunk_table_text(text, page_num, global_chunk_idx)
         else:
-            # Narrative and mixed pages are split into overlapping
-            # fixed-size windows. The chunk_index values returned by
-            # chunk_narrative_text start at 0, so we remap them to
-            # continue the global sequence.
             chunks = chunk_narrative_text(text, page_num)
             for chunk in chunks:
                 chunk["chunk_index"] = global_chunk_idx + chunk["chunk_index"]
 
-        # Attach page-level metadata (page_type and statement_type)
-        # to each chunk so downstream consumers know the source
-        # classification without needing to look up the original page.
         for chunk in chunks:
             chunk["page_type"] = extracted_page["page_type"]
             chunk["statement_type"] = extracted_page["statement_type"]
@@ -243,10 +223,6 @@ def run_annual_report_ingestion(
     extracted_pages = extract_and_classify_pages(logical_pages)
     chunks = chunk_all_pages(extracted_pages)
 
-    # Stamp every chunk with the company-level metadata that was
-    # provided at ingestion time. These fields are constant across
-    # the entire document and are used downstream for filtering
-    # and attribution when querying the vector store.
     for chunk in chunks:
         chunk["company_name"] = company_name
         chunk["fiscal_year"] = fiscal_year

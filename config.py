@@ -19,17 +19,28 @@ CONSOLIDATED_KEYWORDS = [
 CHROMA_PATH = os.path.join(os.path.dirname(__file__), "data", "chromadb")
 COLLECTION_NAME = "cam_documents"
 
-TEST_PDF_PATH = r"C:\Users\samya\OneDrive\Documents\GitHub\CamGeneration\durlax\Annual_Report_2024-25.pdf"        # e.g. "C:/Users/samya/.../AnnualReport.pdf"
-TEST_COMPANY_NAME = "Durlax Top Surface Limited"    # e.g. "Durlax Top Surface Limited"
-TEST_FISCAL_YEAR = 2025
-AUDIT_TEST_PATH = r"C:\Users\samya\OneDrive\Documents\GitHub\CamGeneration\durlax\Audit_Report_2024-25.pdf"
-
-# -- Groq LLM Config -----------------------------------------
-GROQ_API_KEY_1 = os.getenv("GROQ_API_KEY_1")
-GROQ_API_KEY_2 = os.getenv("GROQ_API_KEY_2")
-GROQ_API_KEY_3 = os.getenv("GROQ_API_KEY_3")
-GROQ_MODEL     = "openai/gpt-oss-120b"
-
 # -- Gemini LLM Config ---------------------------------------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL   = "gemini-2.5-flash"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Provider selector — controls which LLM backs all pipeline calls.
+# Valid values: "gemini", "openai", "azure_openai"
+LLM_PROVIDER   = os.environ.get("LLM_PROVIDER", "gemini")
+
+# -- CAM graph settings --------------------------------------
+# Max sections generated in parallel. Keep low on free-tier Gemini
+# to avoid 429 rate-limit errors (retries in llm_utils absorb spikes).
+CAM_MAX_PARALLEL_SECTIONS = int(os.environ.get("CAM_MAX_PARALLEL_SECTIONS", 3))
+
+# Max regeneration rounds for sections that fail the review node.
+CAM_MAX_REVIEW_RETRIES = int(os.environ.get("CAM_MAX_REVIEW_RETRIES", 1))
+
+# OpenAI
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_MODEL   = os.environ.get("OPENAI_MODEL", "gpt-4o")
+
+# Azure OpenAI
+AZURE_OPENAI_API_KEY     = os.environ.get("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT    = os.environ.get("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT  = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")

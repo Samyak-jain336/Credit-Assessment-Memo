@@ -1,116 +1,42 @@
 """
 llm_utils.py — Shared LLM calling utilities for the CAM pipeline.
 
-Provides a single call_llm() function that tries three Groq API keys
-in sequence, falling back to the next key on any failure. Used for
-small structured calls (currency/unit detection, field mapping etc.)
-across the pipeline.
+Supports three providers: Gemini, OpenAI, Azure OpenAI.
+Provider is selected via LLM_PROVIDER in .env.
 
-Also provides call_gemini() / call_gemini_json() for tasks routed
-through the Gemini API (google-genai SDK).
+All pipeline code calls either:
+  call_llm_primary(prompt)       — for prose / section generation
+  call_llm_primary_json(prompt)  — for structured JSON extraction
+
+call_llm() and call_llm_json() are aliases for backward compatibility
+with ingestion modules that already import them by those names.
 """
 
 import json
 import time
-from groq import Groq
+
 import google.genai as genai
+from openai import AzureOpenAI, OpenAI
 
-from config import GROQ_API_KEY_1, GROQ_API_KEY_2, GROQ_API_KEY_3, GROQ_MODEL
-from config import GEMINI_API_KEY, GEMINI_MODEL
-
-
-def call_llm(prompt: str, expect_json: bool = False) -> str:
-    """Call the Groq LLM with a 3-key fallback chain.
-
-    Tries GROQ_API_KEY_1 first, falls back to GROQ_API_KEY_2, then
-    GROQ_API_KEY_3 on any exception (rate limit, auth error, timeout etc.).
-    Raises RuntimeError if all three keys fail.
-
-    Args:
-        prompt:      The user prompt to send to the LLM.
-        expect_json: If True, instructs the model to return only valid
-                     JSON with no preamble or markdown fences. The caller
-                     is still responsible for parsing the returned string.
-
-    Returns:
-        The LLM response as a plain string.
-    """
-    keys = [GROQ_API_KEY_1, GROQ_API_KEY_2, GROQ_API_KEY_3]
-
-    # If JSON output is expected, append an explicit instruction so the
-    # model doesn't wrap the response in markdown backticks or add prose.
-    if expect_json:
-        prompt = (
-            prompt
-            + "\n\nRespond ONLY with valid JSON. "
-            "No explanation, no markdown fences, no preamble."
-        )
-
-    last_error = None
-
-    for i, key in enumerate(keys, start=1):
-        if not key:
-            # Key not set in .env — skip silently rather than trying
-            # an empty string which would give a confusing auth error.
-            continue
-        try:
-            client = Groq(api_key=key)
-            response = client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,      # deterministic output for structured tasks
-                max_tokens=2048,
-            )
-            return response.choices[0].message.content
-
-        except Exception as e:
-            print(f"Groq key {i} failed: {e}. Trying next key...")
-            last_error = e
-
-    raise RuntimeError(
-        f"All Groq keys failed. Last error: {last_error}"
-    )
-
-
-def call_llm_json(prompt: str) -> dict:
-    """Call the LLM and parse the response as JSON.
-
-    Convenience wrapper around call_llm() for structured extraction tasks.
-    Strips markdown fences if the model includes them despite instructions.
-    Raises ValueError if the response cannot be parsed as JSON.
-    """
-    raw = call_llm(prompt, expect_json=True)
-
-    # Strip markdown fences in case the model ignores the instruction
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("```")[1]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-    cleaned = cleaned.strip()
-
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"LLM response could not be parsed as JSON.\n"
-            f"Raw response: {raw}\n"
-            f"Error: {e}"
-        )
+from config import (
+    GEMINI_API_KEY, GEMINI_MODEL,
+    LLM_PROVIDER,
+    OPENAI_API_KEY, OPENAI_MODEL,
+    AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT,
+    AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_VERSION,
+)
 
 
 # ------------------------------------------------------------------ #
-#  Gemini LLM helpers  (google-genai SDK)                            #
+#  Gemini                                                             #
 # ------------------------------------------------------------------ #
 
 def call_gemini(prompt: str, expect_json: bool = False) -> str:
     """Call Gemini with retry + automatic model fallback.
 
     Attempt order:
-      1. gemini-2.5-flash — up to 5 attempts, 5s/10s/15s/20s/25s backoff
-      2. gemini-3.1-flash-lite — up to 5 attempts, 5s/10s/15s/20s/25s backoff
-         (triggered automatically if all 5 attempts on primary model fail)
-
+      1. GEMINI_MODEL (gemini-2.5-flash) — up to 5 attempts
+      2. gemini-2.0-flash                — up to 5 attempts
     Raises RuntimeError only if both models exhaust all attempts.
     """
     if expect_json:
@@ -123,8 +49,8 @@ def call_gemini(prompt: str, expect_json: bool = False) -> str:
     client = genai.Client(api_key=GEMINI_API_KEY)
 
     models_to_try = [
-        GEMINI_MODEL,             # gemini-2.5-flash (from config.py)
-        "gemini-3.1-flash-lite",  # GA as of May 8 2026 — faster, cheaper fallback
+        GEMINI_MODEL,
+        "gemini-2.0-flash",
     ]
 
     last_error = None
@@ -147,22 +73,162 @@ def call_gemini(prompt: str, expect_json: bool = False) -> str:
                           f"retrying in {wait}s...")
                     time.sleep(wait)
 
-    raise RuntimeError(
-        f"All Gemini models failed. Last error: {last_error}"
-    )
+    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
 
 def call_gemini_json(prompt: str) -> dict:
-    """Call Gemini and parse the response as JSON.
-
-    Convenience wrapper around call_gemini() for structured extraction
-    tasks. Strips markdown fences if the model includes them despite
-    instructions. Raises ValueError if the response cannot be parsed
-    as JSON.
-    """
+    """Call Gemini and parse response as JSON."""
     raw = call_gemini(prompt, expect_json=True)
+    return _parse_json(raw)
 
-    # Strip markdown fences in case the model ignores the instruction
+
+# ------------------------------------------------------------------ #
+#  OpenAI                                                             #
+# ------------------------------------------------------------------ #
+
+def call_openai(prompt: str, expect_json: bool = False) -> str:
+    """Call OpenAI with 5-attempt retry and backoff."""
+    if expect_json:
+        prompt = (
+            prompt
+            + "\n\nRespond ONLY with valid JSON. "
+            "No explanation, no markdown fences, no preamble."
+        )
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    last_error = None
+
+    for attempt in range(5):
+        try:
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=8192,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            last_error = e
+            if attempt == 4:
+                print(f"  OpenAI failed all 5 attempts. Last error: {e}")
+            else:
+                wait = 5 * (attempt + 1)
+                print(f"  OpenAI attempt {attempt + 1} failed ({e}), "
+                      f"retrying in {wait}s...")
+                time.sleep(wait)
+
+    raise RuntimeError(f"OpenAI failed. Last error: {last_error}")
+
+
+def call_openai_json(prompt: str) -> dict:
+    """Call OpenAI and parse response as JSON."""
+    raw = call_openai(prompt, expect_json=True)
+    return _parse_json(raw)
+
+
+# ------------------------------------------------------------------ #
+#  Azure OpenAI                                                       #
+# ------------------------------------------------------------------ #
+
+def call_azure_openai(prompt: str, expect_json: bool = False) -> str:
+    """Call Azure OpenAI with 5-attempt retry and backoff."""
+    if expect_json:
+        prompt = (
+            prompt
+            + "\n\nRespond ONLY with valid JSON. "
+            "No explanation, no markdown fences, no preamble."
+        )
+
+    client = AzureOpenAI(
+        api_key=AZURE_OPENAI_API_KEY,
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        api_version=AZURE_OPENAI_API_VERSION,
+    )
+    last_error = None
+
+    for attempt in range(5):
+        try:
+            response = client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=8192,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            last_error = e
+            if attempt == 4:
+                print(f"  Azure OpenAI failed all 5 attempts. Last error: {e}")
+            else:
+                wait = 5 * (attempt + 1)
+                print(f"  Azure OpenAI attempt {attempt + 1} failed ({e}), "
+                      f"retrying in {wait}s...")
+                time.sleep(wait)
+
+    raise RuntimeError(f"Azure OpenAI failed. Last error: {last_error}")
+
+
+def call_azure_openai_json(prompt: str) -> dict:
+    """Call Azure OpenAI and parse response as JSON."""
+    raw = call_azure_openai(prompt, expect_json=True)
+    return _parse_json(raw)
+
+
+# ------------------------------------------------------------------ #
+#  Unified router — all pipeline code should call these              #
+# ------------------------------------------------------------------ #
+
+def call_llm_primary(prompt: str, expect_json: bool = False) -> str:
+    """Route to the configured provider based on LLM_PROVIDER in .env.
+
+    This is the single entry point for all LLM calls in the pipeline.
+    Switch providers by changing LLM_PROVIDER — no code changes needed.
+
+    Valid values: "gemini", "openai", "azure_openai"
+    """
+    provider = LLM_PROVIDER.strip().lower()
+
+    if provider == "gemini":
+        return call_gemini(prompt, expect_json=expect_json)
+    elif provider == "openai":
+        return call_openai(prompt, expect_json=expect_json)
+    elif provider == "azure_openai":
+        return call_azure_openai(prompt, expect_json=expect_json)
+    else:
+        raise ValueError(
+            f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'. "
+            "Must be one of: gemini, openai, azure_openai"
+        )
+
+
+def call_llm_primary_json(prompt: str) -> dict:
+    """Route to configured provider and parse response as JSON."""
+    raw = call_llm_primary(prompt, expect_json=True)
+    return _parse_json(raw)
+
+
+# ------------------------------------------------------------------ #
+#  Backward-compatibility aliases for ingestion modules              #
+#  These modules import call_llm / call_llm_json by name.           #
+#  Keeping these aliases means zero changes needed in ingestion.     #
+# ------------------------------------------------------------------ #
+
+def call_llm(prompt: str, expect_json: bool = False) -> str:
+    """Alias for call_llm_primary(). Replaces Groq-backed call_llm()."""
+    return call_llm_primary(prompt, expect_json=expect_json)
+
+
+def call_llm_json(prompt: str) -> dict:
+    """Alias for call_llm_primary_json(). Replaces Groq-backed call_llm_json()."""
+    return call_llm_primary_json(prompt)
+
+
+# ------------------------------------------------------------------ #
+#  Internal JSON parser                                               #
+# ------------------------------------------------------------------ #
+
+def _parse_json(raw: str) -> dict:
+    """Strip markdown fences and parse JSON. Raises ValueError on failure."""
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("```")[1]
@@ -174,16 +240,15 @@ def call_gemini_json(prompt: str) -> dict:
         return json.loads(cleaned)
     except json.JSONDecodeError as e:
         raise ValueError(
-            f"Gemini response could not be parsed as JSON.\n"
+            f"LLM response could not be parsed as JSON.\n"
             f"Raw response: {raw}\n"
             f"Error: {e}"
         )
 
 
 if __name__ == "__main__":
-    # Quick sanity check — run directly to test the Groq chain:
+    # Quick sanity check — run directly to test the active provider:
     # python llm_utils.py
-    result = call_llm_json(
-        'Return a JSON object with key "status" and value "ok".'
-    )
-    print("LLM chain working:", result)
+    print(f"Active provider: {LLM_PROVIDER}")
+    result = call_llm_primary("Say hello in one sentence.")
+    print("Response:", result)

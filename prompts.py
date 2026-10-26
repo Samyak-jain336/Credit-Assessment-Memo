@@ -153,8 +153,32 @@ def build_section_prompt(
     }
 
     if section_title == "Recommendation":
+        # Identify fields that could not be verified from source documents.
+        # These must be surfaced explicitly in the recommendation rather than
+        # silently ignored — an unconditional approval on unverified figures
+        # is the exact failure mode the credit committee rejected.
+        mismatch_fields = [
+            r.field_name for r in reconciliation
+            if r.status == schema.MISMATCH
+        ]
+        if mismatch_fields:
+            mismatch_warning = (
+                f"CRITICAL DATA ALERT: The following financial fields could "
+                f"NOT be verified against source documents: "
+                f"{', '.join(mismatch_fields)}. "
+                f"You MUST explicitly flag each unverified field in the "
+                f"recommendation body. Do NOT issue an unconditional positive "
+                f"recommendation when key financial data is unverified. "
+                f"For each unverified field, use exactly this wording: "
+                f"'Conditional approval recommended, subject to independent "
+                f"verification of [field_name].'\n"
+            )
+        else:
+            mismatch_warning = ""
+
         reconciliation_instruction = (
-            "9. Base the recommendation strictly on debt serviceability, "
+            f"9. {mismatch_warning}"
+            "Base the recommendation strictly on debt serviceability, "
             "not on balance sheet optics. A low Debt-to-Equity ratio "
             "achieved through equity injection does not offset negative "
             "operating cash flow or a DSCR below 1.0. If DSCR < 1.0 "

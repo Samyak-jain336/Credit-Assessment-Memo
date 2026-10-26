@@ -28,14 +28,7 @@ from config import GEMINI_API_KEY, GEMINI_MODEL
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
 
-# Keywords that indicate a page contains financial statement data (balance
-# sheet, P&L, annexure etc.) — these pages are only skipped when they are
-# also in landscape orientation, since landscape + financial keywords almost
-# always means a wide-format table that doesn't chunk well as narrative text.
-# Intentionally empty — exchange filing PDFs (board meeting outcomes,
-# quarterly results) ARE the financial data source for recent periods.
-# Skipping landscape financial pages here silently drops FY26 data
-# that has no other source in the pipeline.
+
 LANDSCAPE_SKIP_KEYWORDS = []
 
 
