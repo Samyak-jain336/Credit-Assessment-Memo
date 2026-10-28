@@ -1,27 +1,4 @@
-"""
-cam_langgraphh.py
-
-LangGraph workflow for CAM generation.
-
-    START
-      -> ingest
-      -> load_data          --(company not found)--> END
-      -> retrieve
-      -> reconcile
-      -> generate_section   (fan-out: one parallel task per CAM section)
-      -> review             --(failed sections, retries left)--> generate_section
-      -> write
-    END
-
-Design notes:
-- Heavy resources (ChromaDB collection, reconciliation agent, section
-  generator) are created once in build_graph() and bound to the nodes,
-  so they never enter the graph state.
-- The review node is deterministic Python (no LLM). It checks each
-  section for known defect classes and sends only the failed sections
-  back for regeneration with targeted feedback, up to a retry cap.
-- Every run writes a JSON run report next to the .docx.
-"""
+"""LangGraph workflow for CAM generation."""
 
 import json
 import operator
@@ -57,31 +34,21 @@ from vector_store import init_vector_store, query_chunks
 load_dotenv()
 LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING")
 
-
-# =========================================================
-# Constants
-# =========================================================
-
-# Sections where mixing standalone and consolidated chunks produces
-# contradictory or inflated figures. Restricted to standalone only.
+# Sections restricted to standalone-only chunks
 STANDALONE_ONLY_SECTIONS = {
     "Financial Analysis",
     "Risk Assessment",
     "Recommendation",
 }
 
-# Rendered by docx_writer directly from reconciliation results,
-# so its LLM prose is never shown and is not reviewed.
+# Rendered by docx_writer directly from reconciliation results
 CODE_RENDERED_SECTIONS = {"Data Consistency Review"}
 
-# Review thresholds
 MIN_SECTION_CHARS = 300
 MIN_CHUNKS_FOR_MISSING_CHECK = 3
 
-# Dollar figures in an INR credit memo (the "$8,547 million" bug class)
 CURRENCY_PATTERN = re.compile(r"(\$\s?\d|\bUSD\s?\d|\bUS\$)")
 
-# Phrases the LLM uses when it wrongly claims evidence is absent
 MISSING_PHRASES = (
     "not provided",
     "not been provided",
@@ -92,46 +59,33 @@ MISSING_PHRASES = (
 )
 
 
-# =========================================================
-# Graph State
-# =========================================================
-
 def merge_dicts(left: Optional[dict], right: Optional[dict]) -> dict:
     """Reducer: merge dict updates from parallel branches."""
     return {**(left or {}), **(right or {})}
 
 
 class CAMState(TypedDict, total=False):
-    # Inputs
     company_name: str
     fiscal_year: int
     folder_path: str
 
-    # Data
     company_bundle: Optional[Dict[str, Any]]
     company_context: str
     section_chunks: Dict[str, List[RetrievedChunk]]
     reconciliation_results: List[ReconciliationResult]
 
-    # Generation (parallel branches merge into this dict by title)
     sections: Annotated[Dict[str, CAMSection], merge_dicts]
 
-    # Review loop
     pending_titles: List[str]
     review_feedback: Dict[str, List[str]]
     review_attempts: int
     unresolved_issues: Dict[str, List[str]]
 
-    # Outputs and diagnostics
     output_path: Optional[str]
     report_path: Optional[str]
     node_timings: Annotated[Dict[str, float], merge_dicts]
     errors: Annotated[List[str], operator.add]
 
-
-# =========================================================
-# Helpers
-# =========================================================
 
 def timed(name: str):
     """Record a node's wall-clock duration in node_timings."""
@@ -149,19 +103,7 @@ def timed(name: str):
 
 
 def build_company_context(company_bundle: dict) -> str:
-    """Build a structured factual context block from MySQL data.
-
-    Injected into every section prompt as the single source of
-    truth for financial figures, unit, and company identity.
-    Prevents the LLM from re-deriving these facts independently
-    in each section and producing contradictions or unit errors.
-
-    All values come from MySQL — no hardcoding. Unit warning
-    appears only for companies whose financials table stores a
-    non-standard unit (e.g. 'hundreds', 'thousands') so the LLM
-    knows not to re-convert already-converted Crores figures,
-    and knows how to convert raw chunk figures it encounters.
-    """
+    """Build a structured factual context block from MySQL data."""
     company = company_bundle.get("company") or {}
     financials = company_bundle.get("financials")
     bank_stmts = company_bundle.get("bank_statements") or []
@@ -194,8 +136,6 @@ def build_company_context(company_bundle: dict) -> str:
         lines.append(f"Trade Receivables: {fmt(financials.get('trade_receivables'))} Crores")
         lines.append(f"Inventory:         {fmt(financials.get('inventory'))} Crores")
 
-        # Unit warning — only appears when source documents use a
-        # non-standard unit. Derived from MySQL, no hardcoding.
         if unit.lower() not in ("crores", "lakhs"):
             unit_lower = unit.lower().strip()
             if "hundred" in unit_lower:
@@ -249,11 +189,7 @@ def review_section(
     chunk_count: int,
     mismatch_fields: List[str],
 ) -> List[str]:
-    """Deterministic quality checks for one generated section.
-
-    Returns a list of issues, each phrased as an instruction the LLM
-    can act on during regeneration. Empty list means the section passed.
-    """
+    """Deterministic quality checks for one generated section."""
     issues = []
     content = (section.content or "").strip()
     lowered = content.lower()
@@ -317,10 +253,6 @@ def _context_with_feedback(base_context: str, feedback: List[str]) -> str:
     )
 
 
-# =========================================================
-# Graph Builder
-# =========================================================
-
 def build_graph(collection=None):
     """Build and compile the CAM generation graph."""
     if collection is None:
@@ -330,13 +262,9 @@ def build_graph(collection=None):
     generator = SectionGenerator()
     section_titles = list(schema.CAM_SECTIONS.values())
 
-    # -----------------------------------------------------
-    # Node 1 — Ingestion
-    # -----------------------------------------------------
     @timed("ingest")
     def ingest_node(state: CAMState) -> dict:
-        """Run Track A ingestion. Completed steps are skipped
-        automatically via the ingestion_runs table."""
+        """Run Track A ingestion."""
         company_name = state["company_name"]
         print(f"Ensuring ingestion is complete for {company_name}...")
 
@@ -348,19 +276,13 @@ def build_graph(collection=None):
                 gemini_api_key=GEMINI_API_KEY,
             )
         except Exception as e:
-            # Data from an earlier run may still exist, so continue;
-            # load_data decides whether generation is possible.
             return {"errors": [f"ingest: {e}"]}
 
         return {"errors": []}
 
-    # -----------------------------------------------------
-    # Node 2 — Load structured data and build context
-    # -----------------------------------------------------
     @timed("load_data")
     def load_data_node(state: CAMState) -> dict:
-        """Load the company bundle from MySQL and build the
-        verified-facts context block used by every section."""
+        """Load company bundle from MySQL and build verified-facts context."""
         company_name = state["company_name"]
         fiscal_year = state["fiscal_year"]
         print(f"Generating CAM for {company_name} ({fiscal_year})")
@@ -379,19 +301,15 @@ def build_graph(collection=None):
         }
 
     def route_after_load(state: CAMState) -> str:
-        """Stop the graph if the company was not found in MySQL."""
+        """Stop the graph if the company was not found."""
         if state.get("company_bundle"):
             return "retrieve"
         print("ERROR: Company data not found — stopping CAM generation.")
         return END
 
-    # -----------------------------------------------------
-    # Node 3 — Per-section retrieval
-    # -----------------------------------------------------
     @timed("retrieve")
     def retrieve_node(state: CAMState) -> dict:
-        """Retrieve evidence from ChromaDB using the per-section
-        queries in schema.SECTION_QUERIES."""
+        """Retrieve evidence from ChromaDB per section."""
         company_name = state["company_name"]
         print("Retrieving supporting evidence per section...")
         section_chunks = {}
@@ -400,8 +318,6 @@ def build_graph(collection=None):
             chunks = []
             seen_ids = set()
 
-            # ChromaDB requires $and with $eq operators for multi-key
-            # filters — a plain dict with two keys raises a ValueError.
             if title in STANDALONE_ONLY_SECTIONS:
                 section_filter = {
                     "$and": [
@@ -437,13 +353,9 @@ def build_graph(collection=None):
 
         return {"section_chunks": section_chunks}
 
-    # -----------------------------------------------------
-    # Node 4 — Reconciliation
-    # -----------------------------------------------------
     @timed("reconcile")
     def reconcile_node(state: CAMState) -> dict:
-        """Keyword-based reconciliation of DB values against
-        evidence. No LLM calls. Also initialises the review loop."""
+        """Keyword-based reconciliation and review loop init."""
         loop_init = {
             "pending_titles": section_titles,
             "review_feedback": {},
@@ -459,8 +371,6 @@ def build_graph(collection=None):
                 "errors": ["reconcile: no financials found"],
             }
 
-        # Reconciliation expects a flat list, so flatten all sections
-        # and deduplicate chunks that appear in more than one section.
         seen = set()
         flat_chunks = []
         for chunks in state["section_chunks"].values():
@@ -473,12 +383,8 @@ def build_graph(collection=None):
         results = reconciliation_agent.reconcile(financials, flat_chunks)
         return {**loop_init, "reconciliation_results": results}
 
-    # -----------------------------------------------------
-    # Fan-out — one generate_section task per pending title
-    # -----------------------------------------------------
     def dispatch_sections(state: CAMState) -> List[Send]:
-        """Create one parallel task per pending section. On retries,
-        only failed sections are dispatched, with their feedback."""
+        """Create one parallel task per pending section."""
         feedback = state.get("review_feedback") or {}
         company_name = state["company_bundle"]["company"]["company_name"]
 
@@ -499,12 +405,8 @@ def build_graph(collection=None):
             for title in state["pending_titles"]
         ]
 
-    # -----------------------------------------------------
-    # Node 5 — Generate one section (runs in parallel)
-    # -----------------------------------------------------
     def generate_section_node(payload: dict) -> dict:
-        """Generate a single CAM section. A failure here is contained
-        to this section; the review node will flag and retry it."""
+        """Generate a single CAM section."""
         title = payload["title"]
         start = time.perf_counter()
 
@@ -531,13 +433,9 @@ def build_graph(collection=None):
             "errors": errors,
         }
 
-    # -----------------------------------------------------
-    # Node 6 — Deterministic review
-    # -----------------------------------------------------
     @timed("review")
     def review_node(state: CAMState) -> dict:
-        """Check each newly generated section. Failed sections are
-        sent back with feedback until the retry cap is reached."""
+        """Deterministic review of generated sections."""
         attempts = state.get("review_attempts", 0)
         mismatch_fields = [
             r.field_name
@@ -586,9 +484,6 @@ def build_graph(collection=None):
             return dispatch_sections(state)
         return "write"
 
-    # -----------------------------------------------------
-    # Node 7 — Write DOCX and run report
-    # -----------------------------------------------------
     @timed("write")
     def write_node(state: CAMState) -> dict:
         """Write the final CAM .docx and a JSON run report."""
@@ -643,9 +538,7 @@ def build_graph(collection=None):
 
         return {"output_path": output_path, "report_path": report_path}
 
-    # -----------------------------------------------------
     # Wiring
-    # -----------------------------------------------------
     graph = StateGraph(CAMState)
 
     graph.add_node("ingest", ingest_node)
@@ -672,10 +565,6 @@ def build_graph(collection=None):
     return graph.compile()
 
 
-# =========================================================
-# Public API
-# =========================================================
-
 def _initial_state(company_name: str, fiscal_year: int, folder_path: str) -> dict:
     return {
         "company_name": company_name,
@@ -688,7 +577,6 @@ def _initial_state(company_name: str, fiscal_year: int, folder_path: str) -> dic
 
 
 def _run_config() -> dict:
-    # Caps parallel section calls to stay within LLM rate limits
     return {"max_concurrency": CAM_MAX_PARALLEL_SECTIONS}
 
 
@@ -698,8 +586,7 @@ def run_cam(
     folder_path: str,
     collection=None,
 ) -> Optional[str]:
-    """Run the full CAM graph. Returns the .docx path, or None if
-    generation stopped early."""
+    """Run the full CAM graph. Returns the .docx path or None."""
     app = build_graph(collection)
     final_state = app.invoke(
         _initial_state(company_name, fiscal_year, folder_path),
@@ -715,7 +602,7 @@ def run_cam(
 
 
 def export_graph_diagram(path: str = "cam_graph.mmd") -> str:
-    """Write the graph as Mermaid code (paste into mermaid.live)."""
+    """Write the graph as Mermaid code."""
     mermaid = build_graph().get_graph().draw_mermaid()
     with open(path, "w", encoding="utf-8") as f:
         f.write(mermaid)
@@ -723,8 +610,7 @@ def export_graph_diagram(path: str = "cam_graph.mmd") -> str:
 
 
 class CAMOrchestrator:
-    """Backward-compatible wrapper so existing callers (FastAPI)
-    keep working unchanged. Internally delegates to the graph."""
+    """Backward-compatible wrapper for FastAPI callers."""
 
     def __init__(self, collection=None):
         self.app = build_graph(collection)
@@ -742,8 +628,6 @@ class CAMOrchestrator:
         return final_state.get("output_path")
 
     def close(self):
-        # DB connections are opened and closed inside load_data,
-        # so there is nothing to release here. Kept for compatibility.
         pass
 
 

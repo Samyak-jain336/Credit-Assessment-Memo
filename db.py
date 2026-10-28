@@ -1,16 +1,4 @@
-"""
-db.py — MySQL connection and schema initialisation for the CAM pipeline.
-
-Handles all database concerns: connecting, creating tables if they don't
-exist, and providing a reusable connection getter. No ingestion logic here.
-
-Requires the following variables in .env:
-    DB_HOST      e.g. localhost
-    DB_PORT      e.g. 3306
-    DB_USER      e.g. root
-    DB_PASSWORD  e.g. yourpassword
-    DB_NAME      e.g. creditmemo
-"""
+"""MySQL connection and schema initialisation for the CAM pipeline."""
 
 import os
 import mysql.connector
@@ -20,10 +8,7 @@ load_dotenv()
 
 
 def get_connection():
-    """Return a live MySQL connection using credentials from .env.
-
-    Raises mysql.connector.Error if the connection fails.
-    """
+    """Return a live MySQL connection using credentials from .env."""
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "localhost"),
         port=int(os.environ.get("DB_PORT", 3306)),
@@ -34,12 +19,7 @@ def get_connection():
 
 
 def init_db():
-    """Create all pipeline tables if they do not already exist.
-
-    Safe to call on every run — uses CREATE TABLE IF NOT EXISTS so
-    existing data is never dropped. Call this once at pipeline startup
-    before any inserts.
-    """
+    """Create all pipeline tables if they do not already exist."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -61,7 +41,6 @@ def init_db():
             currency                VARCHAR(20) NOT NULL DEFAULT 'INR',
             unit                    VARCHAR(20) NOT NULL,
 
-            -- P&L
             revenue                 DECIMAL(15,2),
             raw_material_cost       DECIMAL(15,2),
             change_in_inventory     DECIMAL(15,2),
@@ -77,7 +56,6 @@ def init_db():
             tax                     DECIMAL(15,2),
             net_profit              DECIMAL(15,2),
 
-            -- Balance Sheet
             equity_share_capital    DECIMAL(15,2),
             reserves                DECIMAL(15,2),
             borrowings              DECIMAL(15,2),
@@ -90,17 +68,13 @@ def init_db():
             inventory               DECIMAL(15,2),
             cash_and_bank           DECIMAL(15,2),
 
-            -- Cash Flow
             cfo                     DECIMAL(15,2),
             cfi                     DECIMAL(15,2),
             cff                     DECIMAL(15,2),
             net_cash_flow           DECIMAL(15,2),
 
-            -- Shares
             no_of_shares            BIGINT,
 
-            -- Unmapped or unrecognised rows from source file stored as JSON
-            -- so no data is silently dropped during ingestion.
             other_findings          JSON,
 
             FOREIGN KEY (company_id) REFERENCES companies(id),
@@ -165,6 +139,4 @@ def init_db():
 
 
 if __name__ == "__main__":
-    # Run directly to initialise the database:
-    # python db.py
     init_db()
